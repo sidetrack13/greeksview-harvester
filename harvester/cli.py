@@ -401,6 +401,17 @@ def stats(
             for chamber, count in data.get("by_chamber", {}).items():
                 table.add_row(f"Chamber: {chamber.upper()}", str(count))
 
+            if data.get("insider_trades"):
+                table.add_row("SEC Form 4 Insider Trades", str(data["insider_trades"]))
+            if data.get("institutional_holdings"):
+                table.add_row("SEC 13F Institutional Holdings", str(data["institutional_holdings"]))
+            if data.get("finra_otc"):
+                table.add_row("FINRA OTC / Dark Pool Records", str(data["finra_otc"]))
+            if data.get("cboe_options"):
+                table.add_row("CBOE Daily Options Records", str(data["cboe_options"]))
+            if data.get("macro_indicators"):
+                table.add_row("FRED Macro Indicators", str(data["macro_indicators"]))
+
             console.print(table)
         finally:
             await db.close()

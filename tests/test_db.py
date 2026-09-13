@@ -157,7 +157,7 @@ async def test_postgres_mode_mocked() -> None:
         assert dup_count == 0
 
         # 4. get_stats
-        mock_conn.fetchval.side_effect = [1, 1, 1]
+        mock_conn.fetchval.side_effect = [1, 1, 1, 0, 0, 0, 0, 0]
         mock_conn.fetch.side_effect = [
             [{"transaction_type": "BUY", "count": 1}],
             [{"chamber": "house", "count": 1}],
@@ -310,3 +310,39 @@ async def test_harvester_tables_sqlite(test_db: DatabaseManager) -> None:
     await test_db.execute("DELETE FROM macro_indicators WHERE id = ?", "macro_test_1")
     empty_val = await test_db.fetchval("SELECT value FROM macro_indicators WHERE id = ?", "macro_test_1")
     assert empty_val is None
+
+    # Test get_stats returns feed counts
+    stats = await test_db.get_stats()
+    assert stats["insider_trades"] >= 1
+    assert stats["institutional_holdings"] >= 1
+    assert stats["finra_otc"] >= 1
+    assert stats["cboe_options"] >= 1
+
+
+def test_database_manager_path_resolution() -> None:
+    """Verify DatabaseManager resolves sqlite_path from settings or defaults."""
+    # 1. Explicit sqlite_path overrides everything
+    db1 = DatabaseManager(sqlite_path=":memory:")
+    assert db1.sqlite_path == ":memory:"
+
+    # 2. sqlite:/// URL prefix
+    s2 = Settings(database_url="sqlite:///custom_path.db")
+    db2 = DatabaseManager(settings=s2)
+    assert db2.sqlite_path == "custom_path.db"
+
+    # 3. sqlite:// URL prefix
+    s3 = Settings(database_url="sqlite://another_path.db")
+    db3 = DatabaseManager(settings=s3)
+    assert db3.sqlite_path == "another_path.db"
+
+    # 4. Default empty database_url resolves to greeksview_harvester.db
+    s4 = Settings(database_url="")
+    db4 = DatabaseManager(settings=s4)
+    assert db4.sqlite_path == "greeksview_harvester.db"
+    assert db4.settings.is_sqlite is True
+
+    # 5. PostgreSQL URL leaves sqlite_path empty and is_sqlite False
+    s5 = Settings(database_url="postgresql://user:pass@localhost:5432/gv")
+    db5 = DatabaseManager(settings=s5)
+    assert db5.sqlite_path == ""
+    assert db5.settings.is_sqlite is False

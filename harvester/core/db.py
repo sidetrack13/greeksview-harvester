@@ -320,9 +320,18 @@ CREATE INDEX IF NOT EXISTS idx_macro_date ON macro_indicators(date);
 class DatabaseManager:
     """Async database abstraction supporting SQLite and PostgreSQL."""
 
-    def __init__(self, settings: Settings | None = None, sqlite_path: str = ":memory:") -> None:
+    def __init__(self, settings: Settings | None = None, sqlite_path: str | None = None) -> None:
         self.settings = settings or get_settings()
-        self.sqlite_path = sqlite_path if self.settings.is_sqlite else ""
+        if sqlite_path is not None:
+            self.sqlite_path = sqlite_path
+        elif self.settings.database_url.startswith("sqlite:///"):
+            self.sqlite_path = self.settings.database_url.removeprefix("sqlite:///")
+        elif self.settings.database_url.startswith("sqlite://"):
+            self.sqlite_path = self.settings.database_url.removeprefix("sqlite://")
+        elif self.settings.is_sqlite:
+            self.sqlite_path = "greeksview_harvester.db"
+        else:
+            self.sqlite_path = ""
         self._sqlite_conn: aiosqlite.Connection | None = None
         self._pg_pool: asyncpg.Pool | None = None
 
@@ -389,7 +398,7 @@ class DatabaseManager:
     async def connect(self) -> None:
         """Establish database connection or pool and initialize schema."""
         if self.settings.is_sqlite:
-            target = self.sqlite_path or "congressional_harvester.db"
+            target = self.sqlite_path or "greeksview_harvester.db"
             self._sqlite_conn = await aiosqlite.connect(target)
             self._sqlite_conn.row_factory = aiosqlite.Row
             await self._sqlite_conn.executescript(SQLITE_SCHEMA)
@@ -592,6 +601,21 @@ class DatabaseManager:
                 "SELECT chamber, COUNT(*) FROM congressional_transactions GROUP BY chamber"
             ) as c5:
                 by_chamber = {row[0]: row[1] for row in await c5.fetchall()}
+            async with self._sqlite_conn.execute("SELECT COUNT(*) FROM insider_trades") as c6:
+                r6 = await c6.fetchone()
+                insider_trades = r6[0] if r6 is not None else 0
+            async with self._sqlite_conn.execute("SELECT COUNT(*) FROM institutional_holdings") as c7:
+                r7 = await c7.fetchone()
+                institutional_holdings = r7[0] if r7 is not None else 0
+            async with self._sqlite_conn.execute("SELECT COUNT(*) FROM finra_otc_volume") as c8:
+                r8 = await c8.fetchone()
+                finra_otc = r8[0] if r8 is not None else 0
+            async with self._sqlite_conn.execute("SELECT COUNT(*) FROM cboe_daily_options") as c9:
+                r9 = await c9.fetchone()
+                cboe_options = r9[0] if r9 is not None else 0
+            async with self._sqlite_conn.execute("SELECT COUNT(*) FROM macro_indicators") as c10:
+                r10 = await c10.fetchone()
+                macro_indicators = r10[0] if r10 is not None else 0
         else:
             assert self._pg_pool is not None
             async with self._pg_pool.acquire() as conn:
@@ -606,6 +630,11 @@ class DatabaseManager:
                 )
                 by_chamber = {row["chamber"]: row["count"] for row in chamber_rows}
                 distinct_tickers = await conn.fetchval("SELECT COUNT(DISTINCT ticker) FROM congressional_transactions")
+                insider_trades = await conn.fetchval("SELECT COUNT(*) FROM insider_trades")
+                institutional_holdings = await conn.fetchval("SELECT COUNT(*) FROM institutional_holdings")
+                finra_otc = await conn.fetchval("SELECT COUNT(*) FROM finra_otc_volume")
+                cboe_options = await conn.fetchval("SELECT COUNT(*) FROM cboe_daily_options")
+                macro_indicators = await conn.fetchval("SELECT COUNT(*) FROM macro_indicators")
 
         return {
             "total_filings": total_filings,
@@ -613,6 +642,11 @@ class DatabaseManager:
             "distinct_tickers": distinct_tickers,
             "by_type": by_type,
             "by_chamber": by_chamber,
+            "insider_trades": insider_trades,
+            "institutional_holdings": institutional_holdings,
+            "finra_otc": finra_otc,
+            "cboe_options": cboe_options,
+            "macro_indicators": macro_indicators,
         }
 
     async def upsert_insider_trades(self, records: list[dict[str, Any]]) -> int:
