@@ -16,6 +16,7 @@ from harvester.core.base_worker import BaseWorker, WorkerResult
 from harvester.core.db import DatabaseManager
 from harvester.core.http_client import resilient_http_client
 from harvester.workers.congressional.house.pipeline import HousePipeline
+from harvester.workers.congressional.senate.client import SenateEfdClient
 from harvester.workers.congressional.senate.pipeline import SenatePipeline
 
 logger = logging.getLogger("harvester.workers.congressional")
@@ -73,6 +74,7 @@ class CongressionalWorker(BaseWorker):
                 max_retries=self.settings.http_max_retries,
                 max_concurrency=self.settings.max_concurrent_downloads,
             ) as http_client:
+                senate_client = SenateEfdClient(http_client=http_client, settings=self.settings) if senate else None
                 for target_year in target_years:
                     if house:
                         try:
@@ -86,13 +88,16 @@ class CongressionalWorker(BaseWorker):
 
                     if senate:
                         try:
-                            sp = SenatePipeline(db=db, http_client=http_client, settings=self.settings)
+                            sp = SenatePipeline(db=db, http_client=http_client, settings=self.settings, client=senate_client)
                             s_report = await sp.run(year=target_year, limit=limit, use_mock=use_mock)
                             harvested += s_report.filings_parsed
                             upserted += s_report.transactions_extracted
                         except Exception as e:
                             logger.error("Senate ingestion failed for %d: %s", target_year, e)
                             errors.append(f"Senate ({target_year}): {str(e)}")
+
+                    # Small polite delay between years to avoid upstream rate limiting
+                    await asyncio.sleep(0.5)
 
         except Exception as e:
             logger.error("Database or network setup failed: %s", e)

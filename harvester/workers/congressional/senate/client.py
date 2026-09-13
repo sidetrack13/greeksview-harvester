@@ -32,14 +32,15 @@ class SenateEfdClient:
 
     async def ensure_handshake(self) -> str:
         """Perform statutory disclaimer agreement handshake to establish session cookies."""
-        if self._handshake_completed and self.csrf_token:
+        client = await self.http_client.get_client()
+        if self._handshake_completed and self.csrf_token and "sessionid" in client.cookies:
             return self.csrf_token
 
-        search_url = self.settings.senate_search_url
-        logger.info("Initiating Senate eFD disclaimer handshake at %s", search_url)
+        home_url = getattr(self.settings, "senate_home_url", self.settings.senate_search_url)
+        logger.info("Initiating Senate eFD disclaimer handshake at %s", home_url)
 
-        # 1. GET search page to extract CSRF token
-        get_resp = await self.http_client.get(search_url, use_cache=False)
+        # 1. GET home agreement page to extract CSRF token
+        get_resp = await self.http_client.get(home_url, use_cache=False)
         soup = BeautifulSoup(get_resp.text, "html.parser")
         csrf_input = soup.find("input", {"name": "csrfmiddlewaretoken"})
 
@@ -51,7 +52,6 @@ class SenateEfdClient:
 
         # Check cookies if not in form input
         if not token:
-            client = await self.http_client.get_client()
             cookie_val = client.cookies.get("csrftoken")
             if cookie_val:
                 token = str(cookie_val)
@@ -65,14 +65,13 @@ class SenateEfdClient:
             "csrfmiddlewaretoken": token,
         }
         headers = {
-            "Referer": search_url,
+            "Referer": home_url,
             "Origin": self.settings.senate_base_url,
         }
-        post_resp = await self.http_client.post(search_url, data=post_data, extra_headers=headers)
+        post_resp = await self.http_client.post(home_url, data=post_data, extra_headers=headers)
         post_resp.raise_for_status()
 
         # Update csrf token from response cookies if refreshed
-        client = await self.http_client.get_client()
         fresh_token = client.cookies.get("csrftoken", "")
         self.csrf_token = fresh_token or token
         self._handshake_completed = True

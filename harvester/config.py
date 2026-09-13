@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     # Senate eFD Endpoints
     senate_base_url: str = "https://efdsearch.senate.gov"
+    senate_home_url: str = "https://efdsearch.senate.gov/search/home/"
     senate_search_url: str = "https://efdsearch.senate.gov/search/"
     senate_data_endpoint: str = "https://efdsearch.senate.gov/search/report/data/"
 

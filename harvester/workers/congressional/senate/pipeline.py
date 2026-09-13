@@ -31,11 +31,12 @@ class SenatePipeline:
         db: DatabaseManager,
         http_client: ResilientHttpClient,
         settings: Settings | None = None,
+        client: SenateEfdClient | None = None,
     ) -> None:
         self.db = db
         self.http_client = http_client
         self.settings = settings or get_settings()
-        self.client = SenateEfdClient(http_client=http_client, settings=self.settings)
+        self.client = client or SenateEfdClient(http_client=http_client, settings=self.settings)
         self.html_parser = SenateHtmlParser()
         self.pdf_parser = HousePTRParser()
 

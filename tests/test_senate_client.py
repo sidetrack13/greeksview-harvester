@@ -17,6 +17,7 @@ async def test_senate_client_handshake_flow() -> None:
     client = ResilientHttpClient()
     settings = Settings(
         senate_base_url="https://efdsearch.senate.gov",
+        senate_home_url="https://efdsearch.senate.gov/search/home/",
         senate_search_url="https://efdsearch.senate.gov/search/",
         senate_data_endpoint="https://efdsearch.senate.gov/search/report/data/",
     )
@@ -25,12 +26,12 @@ async def test_senate_client_handshake_flow() -> None:
     mock_html = MockSenateServer.generate_mock_disclaimer_page("test_token_999")
 
     with respx.mock() as respx_mock:
-        # 1. GET search page
-        respx_mock.get("https://efdsearch.senate.gov/search/").respond(
+        # 1. GET search/home page
+        respx_mock.get("https://efdsearch.senate.gov/search/home/").respond(
             200, text=mock_html, headers={"Set-Cookie": "csrftoken=test_token_999;"}
         )
         # 2. POST agreement
-        respx_mock.post("https://efdsearch.senate.gov/search/").respond(
+        respx_mock.post("https://efdsearch.senate.gov/search/home/").respond(
             200, text="Agreement accepted", headers={"Set-Cookie": "csrftoken=fresh_token_888; sessionid=sess123;"}
         )
 
@@ -50,6 +51,7 @@ async def test_senate_client_handshake_fallback_cookie_and_dummy() -> None:
     client = ResilientHttpClient()
     settings = Settings(
         senate_base_url="https://efdsearch.senate.gov",
+        senate_home_url="https://efdsearch.senate.gov/search/home/",
         senate_search_url="https://efdsearch.senate.gov/search/",
         senate_data_endpoint="https://efdsearch.senate.gov/search/report/data/",
     )
@@ -59,8 +61,10 @@ async def test_senate_client_handshake_fallback_cookie_and_dummy() -> None:
     html_without_csrf = "<html><body>No input here</body></html>"
 
     with respx.mock() as respx_mock:
-        respx_mock.get("https://efdsearch.senate.gov/search/").respond(200, text=html_without_csrf)
-        respx_mock.post("https://efdsearch.senate.gov/search/").respond(200, text="OK")
+        respx_mock.get("https://efdsearch.senate.gov/search/home/").respond(200, text=html_without_csrf)
+        respx_mock.post("https://efdsearch.senate.gov/search/home/").respond(
+            200, text="OK", headers={"Set-Cookie": "sessionid=sess123;"}
+        )
 
         token = await senate_client.ensure_handshake()
         assert token == "dummy_csrf_token"
@@ -75,6 +79,7 @@ async def test_senate_client_handshake_fallback_cookie() -> None:
     http_c.cookies.set("csrftoken", "cookie_csrf_val")
     settings = Settings(
         senate_base_url="https://efdsearch.senate.gov",
+        senate_home_url="https://efdsearch.senate.gov/search/home/",
         senate_search_url="https://efdsearch.senate.gov/search/",
         senate_data_endpoint="https://efdsearch.senate.gov/search/report/data/",
     )
@@ -84,8 +89,10 @@ async def test_senate_client_handshake_fallback_cookie() -> None:
     html_with_empty_input = "<html><body><input name='csrfmiddlewaretoken' value=''></body></html>"
 
     with respx.mock() as respx_mock:
-        respx_mock.get("https://efdsearch.senate.gov/search/").respond(200, text=html_with_empty_input)
-        respx_mock.post("https://efdsearch.senate.gov/search/").respond(200, text="OK")
+        respx_mock.get("https://efdsearch.senate.gov/search/home/").respond(200, text=html_with_empty_input)
+        respx_mock.post("https://efdsearch.senate.gov/search/home/").respond(
+            200, text="OK", headers={"Set-Cookie": "sessionid=sess123;"}
+        )
 
         token = await senate_client.ensure_handshake()
         assert token == "cookie_csrf_val"
