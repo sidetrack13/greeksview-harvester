@@ -201,6 +201,79 @@ def health_command(
     asyncio.run(_health())
 
 
+@app.command(name="sync-pg")
+def sync_pg_command(
+    pg_url: Annotated[str | None, typer.Option("--pg-url", help="Target PostgreSQL connection string (defaults to DATABASE_URL)")] = None,
+    sqlite_path: Annotated[str, typer.Option("--sqlite-path", help="Source SQLite database file path")] = "greeksview_harvester.db",
+    batch_size: Annotated[int, typer.Option("--batch-size", "-b", help="Batch size for PostgreSQL inserts")] = 1000,
+    table: Annotated[list[str] | None, typer.Option("--table", "-t", help="Specific table(s) to sync (default: all)")] = None,
+) -> None:
+    """Synchronize all locally harvested SQLite tables into PostgreSQL."""
+    settings = get_settings()
+    target_url = pg_url or settings.database_url
+    if not target_url or target_url.startswith("sqlite"):
+        console.print(
+            "[bold red]Error:[/bold red] Target PostgreSQL connection string required.\n"
+            "Provide via [cyan]--pg-url 'postgresql://user:pass@host:5432/dbname'[/cyan] or set [cyan]DATABASE_URL[/cyan]."
+        )
+        raise typer.Exit(code=1)
+
+    from harvester.core.sync import sync_sqlite_to_postgres
+
+    console.print(
+        Panel(
+            f"[bold]Source SQLite:[/bold] [cyan]{sqlite_path}[/cyan]\n"
+            f"[bold]Target PostgreSQL:[/bold] [green]{target_url.split('@')[-1] if '@' in target_url else 'configured'}[/green]\n"
+            f"[bold]Batch Size:[/bold] {batch_size}\n"
+            f"[bold]Filter Tables:[/bold] {', '.join(table) if table else 'ALL TABLES'}",
+            title="Database Synchronization: SQLite ➔ PostgreSQL",
+        )
+    )
+
+    async def _sync() -> None:
+        with console.status("[bold green]Synchronizing tables from SQLite to PostgreSQL..."):
+            try:
+                summary = await sync_sqlite_to_postgres(
+                    pg_url=target_url,
+                    sqlite_path=sqlite_path,
+                    batch_size=batch_size,
+                    settings=settings,
+                    target_tables=table,
+                )
+            except Exception as e:
+                console.print(f"[bold red]Sync Failed:[/bold red] {e}")
+                raise typer.Exit(code=1) from None
+
+        res_table = Table(title="Synchronization Results Summary")
+        res_table.add_column("Table Name", style="bold cyan")
+        res_table.add_column("SQLite Rows", justify="right")
+        res_table.add_column("Synced to Postgres", justify="right", style="bold green")
+        res_table.add_column("Duration", justify="right")
+
+        total_rows = 0
+        total_time = 0.0
+        for tbl_name, stats in summary.items():
+            res_table.add_row(
+                tbl_name,
+                str(stats["sqlite_count"]),
+                str(stats["synced_count"]),
+                f"{stats['duration_seconds']:.2f}s",
+            )
+            total_rows += stats["synced_count"]
+            total_time += stats["duration_seconds"]
+
+        res_table.add_section()
+        res_table.add_row(
+            "[bold]TOTAL[/bold]",
+            "",
+            f"[bold green]{total_rows}[/bold green]",
+            f"[bold]{total_time:.2f}s[/bold]",
+        )
+        console.print(res_table)
+
+    asyncio.run(_sync())
+
+
 @app.command()
 def house(
     year: Annotated[int, typer.Option("--year", "-y", help="Calendar year to crawl")] = 2024,

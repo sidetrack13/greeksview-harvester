@@ -164,6 +164,30 @@ Supports both **PostgreSQL** (production) and **SQLite** (local development/test
 - `cboe_daily_options`: Daily call/put volumes, equity put/call ratio, index put/call ratio, and VIX volume.
 - `macro_indicators`: US Treasury constant maturity yields (1M through 30Y), Fed Funds, SOFR, CPI, and GDP.
 
+### Synchronizing SQLite to PostgreSQL (`sync-pg`)
+
+Push all locally harvested records directly into your PostgreSQL database with a single CLI command:
+
+```bash
+# Sync all tables using DATABASE_URL from .env
+harvester sync-pg
+
+# Sync using an explicit PostgreSQL connection string
+harvester sync-pg --pg-url "postgresql://user:pass@host:5432/greeksview"
+
+# Sync specific tables with a custom batch size
+harvester sync-pg --table congressional_filings --table congressional_transactions --batch-size 2000
+
+# Specify a custom source SQLite database path
+harvester sync-pg --sqlite-path ./custom_harvester.db --pg-url "postgresql://..."
+```
+
+**Features:**
+- **Automatic Schema Initialization**: Automatically verifies and executes the PostgreSQL table schema and views (`v_ticker_congressional_summary`) idempotently prior to insertion.
+- **Dependency Ordering**: Syncs parent tables (`congressional_filings`) before child tables (`congressional_transactions`) to preserve foreign key constraints.
+- **Idempotent Batch Upserts**: Resolves record collisions via `ON CONFLICT DO NOTHING` or `DO UPDATE`, making synchronization completely safe to re-run.
+- **High-Performance Chunking**: Configurable `--batch-size` (default 1,000 rows) using native asyncpg parameter binding and connection pooling.
+
 ---
 
 ## 📊 Max Historical Depth & Storage Capacity Requirements
@@ -201,7 +225,7 @@ Even when executing maximum historical sweeps across all feeds, storage requirem
 ## 🧪 Testing & Verification
 
 ```bash
-# Run complete test suite (111 tests across all workers, pipelines, and CLI; coverage >= 90%)
+# Run complete test suite (119 tests across all workers, pipelines, sync engine, and CLI; coverage >= 90%)
 pytest -v
 
 # Run linting check
