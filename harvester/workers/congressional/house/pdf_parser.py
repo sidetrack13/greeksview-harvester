@@ -167,7 +167,7 @@ class HousePTRParser:
         try:
             with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
                 for page in pdf.pages:
-                    text = page.extract_text() or ""
+                    text = (page.extract_text() or "").replace("\x00", "")
                     if text:
                         raw_text_chunks.append(text)
 
@@ -179,7 +179,7 @@ class HousePTRParser:
 
                         # Inspect rows
                         for row in table:
-                            row_clean = [str(c).strip() if c is not None else "" for c in row]
+                            row_clean = [str(c).replace("\x00", "").strip() if c is not None else "" for c in row]
                             # Look for transaction row with ticker and date
                             parsed_tx = self._extract_transaction_from_row(row_clean, record, filing_id)
                             if parsed_tx is not None:
@@ -194,7 +194,7 @@ class HousePTRParser:
         if not transactions and not raw_text_chunks:
             filing.status = FilingStatus.ERROR
 
-        filing.raw_text = "\n".join(raw_text_chunks)[:10000] if raw_text_chunks else None
+        filing.raw_text = "\n".join(raw_text_chunks)[:10000].replace("\x00", "") if raw_text_chunks else None
         return filing, transactions
 
     def _extract_transaction_from_row(

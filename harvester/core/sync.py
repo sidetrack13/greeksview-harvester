@@ -31,6 +31,16 @@ def _parse_date(val: Any) -> date | None:
     return None
 
 
+def _clean_str(val: Any) -> str | None:
+    """Sanitize strings by removing PostgreSQL-incompatible null bytes (0x00)."""
+    if val is None:
+        return None
+    s = str(val)
+    if "\x00" in s:
+        s = s.replace("\x00", "")
+    return s
+
+
 async def sync_sqlite_to_postgres(
     pg_url: str,
     sqlite_path: str = "greeksview_harvester.db",
@@ -147,16 +157,16 @@ async def _sync_congressional_filings(sqlite_conn: sqlite3.Connection, pg_pool: 
                 if f_date is None:
                     continue
                 batch.append((
-                    r["filing_id"],
-                    r["chamber"],
-                    r["member_name"],
-                    r["member_id"],
+                    _clean_str(r["filing_id"]),
+                    _clean_str(r["chamber"]),
+                    _clean_str(r["member_name"]),
+                    _clean_str(r["member_id"]),
                     r["filing_year"],
                     f_date,
-                    r["doc_url"],
-                    r["raw_text"],
-                    r["sha256_hash"],
-                    r["status"],
+                    _clean_str(r["doc_url"]),
+                    _clean_str(r["raw_text"]),
+                    _clean_str(r["sha256_hash"]),
+                    _clean_str(r["status"]),
                 ))
             if batch:
                 await conn.executemany(query, batch)
@@ -194,23 +204,23 @@ async def _sync_congressional_transactions(sqlite_conn: sqlite3.Connection, pg_p
                 if t_date is None or f_date is None:
                     continue
                 batch.append((
-                    r["filing_id"],
-                    r["member_name"],
-                    r["chamber"],
-                    r["party"],
-                    r["state"],
-                    r["district"],
-                    r["ticker"],
-                    r["asset_description"],
-                    r["asset_type"],
-                    r["transaction_type"],
-                    r["amount_bracket"],
+                    _clean_str(r["filing_id"]),
+                    _clean_str(r["member_name"]),
+                    _clean_str(r["chamber"]),
+                    _clean_str(r["party"]),
+                    _clean_str(r["state"]),
+                    _clean_str(r["district"]),
+                    _clean_str(r["ticker"]),
+                    _clean_str(r["asset_description"]),
+                    _clean_str(r["asset_type"]),
+                    _clean_str(r["transaction_type"]),
+                    _clean_str(r["amount_bracket"]),
                     float(r["amount_min"]) if r["amount_min"] is not None else 0.0,
                     float(r["amount_max"]) if r["amount_max"] is not None else None,
                     t_date,
                     f_date,
-                    r["owner"],
-                    r["comment"],
+                    _clean_str(r["owner"]),
+                    _clean_str(r["comment"]),
                 ))
             if batch:
                 await conn.executemany(query, batch)
@@ -242,13 +252,13 @@ async def _sync_macro_indicators(sqlite_conn: sqlite3.Connection, pg_pool: Any, 
                     continue
                 val = float(r["value"]) if r["value"] is not None else 0.0
                 batch.append((
-                    r["id"],
-                    r["series_id"],
-                    r["indicator_name"],
+                    _clean_str(r["id"]),
+                    _clean_str(r["series_id"]),
+                    _clean_str(r["indicator_name"]),
                     obs_date,
                     val,
-                    r["frequency"],
-                    r["units"],
+                    _clean_str(r["frequency"]),
+                    _clean_str(r["units"]),
                 ))
             if batch:
                 await conn.executemany(query, batch)
@@ -285,7 +295,7 @@ async def _sync_cboe_daily_options(sqlite_conn: sqlite3.Connection, pg_pool: Any
                 if t_date is None:
                     continue
                 batch.append((
-                    r["id"],
+                    _clean_str(r["id"]),
                     t_date,
                     float(r["total_call_volume"] or 0),
                     float(r["total_put_volume"] or 0),
@@ -326,10 +336,10 @@ async def _sync_finra_otc_volume(sqlite_conn: sqlite3.Connection, pg_pool: Any, 
                 if w_date is None:
                     continue
                 batch.append((
-                    r["id"],
-                    r["symbol"],
+                    _clean_str(r["id"]),
+                    _clean_str(r["symbol"]),
                     w_date,
-                    r["tier"],
+                    _clean_str(r["tier"]),
                     float(r["otc_volume"] or 0),
                     float(r["total_trades"] or 0),
                     float(r["total_market_volume"] or 0) if r["total_market_volume"] is not None else None,
@@ -370,21 +380,21 @@ async def _sync_insider_trades(sqlite_conn: sqlite3.Connection, pg_pool: Any, ba
                 if f_date is None:
                     continue
                 batch.append((
-                    r["id"],
-                    r["symbol"],
+                    _clean_str(r["id"]),
+                    _clean_str(r["symbol"]),
                     f_date,
                     t_date,
-                    r["reporting_owner"],
-                    r["owner_title"],
+                    _clean_str(r["reporting_owner"]),
+                    _clean_str(r["owner_title"]),
                     bool(r["is_director"]),
                     bool(r["is_officer"]),
                     bool(r["is_ten_percent"]),
-                    r["transaction_type"],
+                    _clean_str(r["transaction_type"]),
                     float(r["shares"]) if r["shares"] is not None else None,
                     float(r["price_per_share"]) if r["price_per_share"] is not None else None,
                     float(r["shares_owned_following"]) if r["shares_owned_following"] is not None else None,
-                    r["sec_form"],
-                    r["filing_url"],
+                    _clean_str(r["sec_form"]),
+                    _clean_str(r["filing_url"]),
                 ))
             if batch:
                 await conn.executemany(query, batch)
@@ -420,18 +430,18 @@ async def _sync_institutional_holdings(sqlite_conn: sqlite3.Connection, pg_pool:
                 if q_date is None:
                     continue
                 batch.append((
-                    r["id"],
-                    r["cik"],
-                    r["institution_name"],
+                    _clean_str(r["id"]),
+                    _clean_str(r["cik"]),
+                    _clean_str(r["institution_name"]),
                     q_date,
-                    r["symbol"],
-                    r["cusip"],
+                    _clean_str(r["symbol"]),
+                    _clean_str(r["cusip"]),
                     float(r["shares"] or 0),
                     float(r["market_value"]) if r["market_value"] is not None else None,
-                    r["investment_discretion"],
+                    _clean_str(r["investment_discretion"]),
                     float(r["voting_authority_sole"]) if r["voting_authority_sole"] is not None else None,
-                    r["sec_form"],
-                    r["filing_url"],
+                    _clean_str(r["sec_form"]),
+                    _clean_str(r["filing_url"]),
                 ))
             if batch:
                 await conn.executemany(query, batch)

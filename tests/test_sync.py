@@ -9,11 +9,20 @@ from typer.testing import CliRunner
 
 from harvester.cli import app
 from harvester.core.sync import (
+    _clean_str,
     _parse_date,
     sync_sqlite_to_postgres,
 )
 
 runner = CliRunner()
+
+
+def test_clean_str():
+    """Test null byte (0x00) stripping for PostgreSQL UTF-8 compatibility."""
+    assert _clean_str(None) is None
+    assert _clean_str("clean string") == "clean string"
+    assert _clean_str("null\x00byte\x00test") == "nullbytetest"
+    assert _clean_str(123) == "123"
 
 
 def test_parse_date():
@@ -49,11 +58,13 @@ async def test_sync_sqlite_to_postgres_execution(tmp_path):
         sha256_hash TEXT, status TEXT
     )
     """)
-    cur.execute("""
-    INSERT INTO congressional_filings VALUES (
-        'FILING_H1', 'house', 'Jane Doe', 'D001', 2024, '2024-05-15', 'http://url', 'text', 'hash1', 'parsed'
+    cur.execute(
+        "INSERT INTO congressional_filings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            'FILING_H1', 'house', 'Jane Doe', 'D001', 2024, '2024-05-15',
+            'http://url', 'text\x00with\x00nulls', 'hash1', 'parsed',
+        ),
     )
-    """)
 
     cur.execute("""
     CREATE TABLE congressional_transactions (
@@ -63,12 +74,13 @@ async def test_sync_sqlite_to_postgres_execution(tmp_path):
         filing_date TEXT, owner TEXT, comment TEXT
     )
     """)
-    cur.execute("""
-    INSERT INTO congressional_transactions VALUES (
-        'FILING_H1', 'Jane Doe', 'house', 'Democrat', 'CA', '12', 'NVDA', 'NVIDIA Corp',
-        'stock', 'BUY', '$1,001 - $15,000', 1001.0, 15000.0, '2024-05-10', '2024-05-15', 'self', 'test'
+    cur.execute(
+        "INSERT INTO congressional_transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            'FILING_H1', 'Jane Doe', 'house', 'Democrat', 'CA', '12', 'NVDA', 'NVIDIA\x00Corp\x00',
+            'stock', 'BUY', '$1,001 - $15,000', 1001.0, 15000.0, '2024-05-10', '2024-05-15', 'self', 'test\x00',
+        ),
     )
-    """)
 
     cur.execute("""
     CREATE TABLE macro_indicators (
@@ -146,6 +158,12 @@ async def test_sync_sqlite_to_postgres_execution(tmp_path):
         assert summary["finra_otc_volume"]["synced_count"] == 1
         assert summary["insider_trades"]["synced_count"] == 1
         assert summary["institutional_holdings"]["synced_count"] == 1
+
+        # Verify no null bytes reached PostgreSQL executemany calls
+        for call in mock_pg_conn.executemany.call_args_list:
+            for row in call.args[1]:
+                for val in row:
+                    assert "\x00" not in str(val)
 
 
 def test_cli_sync_pg_missing_url():
