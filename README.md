@@ -12,6 +12,49 @@ While real-time option chain Greeks and order routing connect directly to user b
 
 ---
 
+## 💻 Quick Start & Local Execution
+
+### 1. Prerequisites & Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/sidetrack13/greeksview-harvester.git
+cd greeksview-harvester
+
+# Install dependencies with uv (recommended):
+uv sync --extra dev
+
+# Symlink CLI binaries to your user PATH (~/.local/bin) for global access:
+ln -sf $(pwd)/.venv/bin/harvester ~/.local/bin/harvester
+ln -sf $(pwd)/.venv/bin/crawler ~/.local/bin/crawler
+
+# Alternative: standard python venv + pip
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+### 2. Running Locally
+
+You can run the harvester using any of these 3 approaches:
+
+| Approach | Command Example | When to Use |
+| :--- | :--- | :--- |
+| **Direct CLI** | `harvester list` | Standard workflow once linked to `~/.local/bin` (already in PATH on macOS/Linux). |
+| **`uv run`** | `uv run harvester list` | Direct execution without needing to manually activate the virtual environment. |
+| **Virtualenv** | `source .venv/bin/activate && harvester list` | Traditional active virtual environment shell session. |
+
+### 3. Database Configuration
+- **Zero-Friction Dev (SQLite)**: By default, if `DATABASE_URL` is omitted, the harvester automatically runs in SQLite mode creating a local database file (`congressional_harvester.db`) or throwaway in-memory database with `--db-url sqlite:///:memory:`.
+- **PostgreSQL Mode**: Point `DATABASE_URL` to your PostgreSQL database:
+  ```bash
+  export DATABASE_URL="postgresql://greeksview_app:secret@localhost:5432/greeksview"
+  export PGSSL="false"
+  harvester health
+  ```
+
+---
+
 ## 🚀 Registered Background Workers
 
 | Worker | Target Terminal Views | Update Cadence | Data Upstream |
