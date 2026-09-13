@@ -33,19 +33,43 @@ Every worker in `greeksview-harvester` implements `BaseWorker` (`harvester/core/
 # List all registered workers and target views
 harvester list
 
-# Run a specific worker independently
+# Run a specific worker in LIVE mode (makes real public upstream API calls)
 harvester run finra_darkpool --limit 10
 harvester run sec_edgar --limit 50
 harvester run cboe_options --days-back 5
 harvester run fred_macro --limit 15
 harvester run congressional --year 2024
 
+# Run in simulation mode (uses calibrated offline synthetic data)
+harvester run cboe_options --mock
+harvester run fred_macro --mock
+
 # Run all workers sequentially with consolidated reporting
-harvester run-all
+harvester run-all           # LIVE mode
+harvester run-all --mock    # Simulation mode
 
 # Health diagnostic check across all worker upstreams and database
 harvester health
 ```
+
+---
+
+## 🌐 Live API Ingestion vs. Simulation (`--mock`)
+
+By default, **omitting the `--mock` flag runs the worker in `Mode: LIVE`**, issuing real HTTP requests directly to authoritative public endpoints:
+
+| Worker | Target Views | Live Upstream Endpoint | Real Network Call Details |
+| :--- | :--- | :--- | :--- |
+| **`fred_macro`** | **View 24** (Macro Indicators) | `https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}` | **Real Live HTTP GET.** Downloads real CSV files from the St. Louis Federal Reserve for US Treasury yield curves (`DGS1MO` through `DGS30`), `FEDFUNDS`, `SOFR`, `CPIAUCSL`, and `GDPC1`. Parses and records latest data points. |
+| **`cboe_options`** | **View 21 & 27** (Options Vol & P/C Ratio) | `https://cdn.cboe.com/data/us/options/market_statistics/daily_ratios/` | **Real Live HTTP GET.** Fetches official CBOE end-of-day `{YYYY-MM-DD}_daily_ratios.csv` files, extracting total call/put volumes, equity put/call ratios, index put/call ratios, and VIX volume. |
+| **`finra_darkpool`** | **View 29** (Dark Pool Share) | `https://api.finra.org/data/group/otcMarket/name/weeklySummary` | **Real Live HTTP GET.** Queries FINRA's public Transparency API passing `issueSymbolIdentifier` and `weekStartDate` for weekly off-exchange OTC trade count and volume disclosures. |
+| **`congressional`** | **View 14** (Congressional Trades) | **House**: `https://disclosures-clerk.house.gov`<br>**Senate**: `https://efdsearch.senate.gov` | **Real Live HTTP & File Ingestion.**<br>• **House**: Downloads official `{YEAR}FD.ZIP` index from the House Clerk, unzips XML, and fetches live PTR PDFs.<br>• **Senate**: Posts directly to the Senate eFD search endpoint with session tokens to extract periodic transaction reports. |
+| **`sec_edgar`** | **View 09 & 11** (Insider & 13F) | `https://data.sec.gov` & `https://www.sec.gov` | **Real Live HTTP Polling & Compliance.** Communicates with SEC EDGAR using declared User-Agent (`GreeksView-Harvester/1.0 (ops@fathomlineanalytics.com)`), enforcing the SEC Fair Access $\le 10$ req/sec ceiling. |
+
+### Built-in Resilience & Fallback Logic
+1. **Market Holidays / Off-Hours**: If CBOE or FINRA has not yet published data for a specific date (e.g. weekend or holiday), the worker detects the non-200 or empty response and falls back to calibrated statistical distributions without crashing or blocking remaining tasks.
+2. **Offline Simulation Mode (`--mock`)**: Passing `--mock` runs the workers completely offline using deterministic test fixtures and calibrated financial generators, ideal for isolated testing, air-gapped sandboxes, and CI/CD pipelines.
+3. **Pacing & Rate Limits**: Live calls automatically adhere to upstream rate limits (e.g. SEC $\le 10$ req/s, download concurrency caps).
 
 ### 2. Standalone Python Module Execution
 ```bash
