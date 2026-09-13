@@ -1,0 +1,51 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Packaging & Distribution
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Testing & Coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+coverage.xml
+
+# Linters & Typing
+.mypy_cache/
+.ruff_cache/
+
+# Local Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+certs/
+
+# Local Data, SQLite & Caches
+*.db
+*.db-shm
+*.db-wal
+downloads/
+data/
+*.pdf
+!tests/fixtures/*.pdf
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride

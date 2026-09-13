@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FinancialDisclosure>
+  <Member>
+    <Prefix>Hon.</Prefix>
+    <Last>Pelosi</Last>
+    <First>Nancy</First>
+    <FilingType>P</FilingType>
+    <StateDst>CA11</StateDst>
+    <Year>2024</Year>
+    <FilingDate>01/15/2024</FilingDate>
+    <DocID>20024101</DocID>
+  </Member>
+  <Member>
+    <Prefix>Hon.</Prefix>
+    <Last>McCaul</Last>
+    <First>Michael</First>
+    <FilingType>P</FilingType>
+    <StateDst>TX10</StateDst>
+    <Year>2024</Year>
+    <FilingDate>02/10/2024</FilingDate>
+    <DocID>20024102</DocID>
+  </Member>
+  <Member>
+    <Prefix>Hon.</Prefix>
+    <Last>Khanna</Last>
+    <First>Ro</First>
+    <FilingType>P</FilingType>
+    <StateDst>CA17</StateDst>
+    <Year>2024</Year>
+    <FilingDate>03/05/2024</FilingDate>
+    <DocID>20024103</DocID>
+  </Member>
+  <Member>
+    <Prefix>Hon.</Prefix>
+    <Last>Smith</Last>
+    <First>John</First>
+    <FilingType>A</FilingType>
+    <StateDst>NY01</StateDst>
+    <Year>2024</Year>
+    <FilingDate>05/15/2024</FilingDate>
+    <DocID>20024104</DocID>
+  </Member>
+</FinancialDisclosure>

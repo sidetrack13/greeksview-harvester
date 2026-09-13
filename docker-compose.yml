@@ -1,0 +1,61 @@
+services:
+  crawler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: greeksview/congressional-crawler:latest
+    container_name: gv-congressional-crawler
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://greeksview_app:greeksview_secret@postgres:5432/greeksview
+      - PGSSL=false
+      - SIMULATION_MODE=false
+      - PORT=8080
+      - LOG_LEVEL=INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: gv-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=greeksview_app
+      - POSTGRES_PASSWORD=greeksview_secret
+      - POSTGRES_DB=greeksview
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U greeksview_app -d greeksview"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: gv-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  redisdata:
