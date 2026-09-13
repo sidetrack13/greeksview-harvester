@@ -76,19 +76,28 @@ Every worker in `greeksview-harvester` implements `BaseWorker` (`harvester/core/
 # List all registered workers and target views
 harvester list
 
-# Run a specific worker in LIVE mode (makes real public upstream API calls)
-harvester run finra_darkpool --limit 10
-harvester run sec_edgar --limit 50
-harvester run cboe_options --days-back 5
-harvester run fred_macro --limit 15
-harvester run congressional --year 2024
+# Run a specific worker in LIVE mode with DEFAULT MAX HISTORY (pulls complete history)
+harvester run fred_macro           # Complete multi-decade history (100k+ data points across Treasuries/Rates/CPI)
+harvester run cboe_options         # Full 252 trading days (~1 year) of CBOE daily flow & P/C ratios
+harvester run finra_darkpool       # Full 52 rolling weeks (~1 year) of weekly OTC dark pool volume
+harvester run congressional        # All historical disclosures back to 2012 STOCK Act inception
+harvester run sec_edgar            # All benchmark tickers for Form 4 and Form 13F filings
+
+# Optional: Restrict history with flags if you only want recent data or specific windows
+harvester run fred_macro --limit 15             # Restrict to last 15 observations per series
+harvester run cboe_options --days-back 5        # Restrict to last 5 trading days
+harvester run finra_darkpool --weeks-back 4     # Restrict to last 4 weeks
+harvester run congressional --single-year       # Restrict to current calendar year only
+harvester run congressional --year 2024         # Target a specific calendar year
+harvester run sec_edgar --limit 10              # Restrict to 10 tickers
 
 # Run in simulation mode (uses calibrated offline synthetic data)
 harvester run cboe_options --mock
 harvester run fred_macro --mock
 
-# Run all workers sequentially with consolidated reporting
-harvester run-all           # LIVE mode
+# Run all workers sequentially with consolidated reporting (Max History by default)
+harvester run-all           # LIVE mode (Full History)
+harvester run-all --limit 5 # Restricted sample
 harvester run-all --mock    # Simulation mode
 
 # Health diagnostic check across all worker upstreams and database
@@ -160,7 +169,7 @@ Supports both **PostgreSQL** (production) and **SQLite** (local development/test
 ## 🧪 Testing & Verification
 
 ```bash
-# Run complete test suite (107 tests across all workers, pipelines, and CLI)
+# Run complete test suite (111 tests across all workers, pipelines, and CLI; coverage >= 90%)
 pytest -v
 
 # Run linting check

@@ -61,7 +61,7 @@ class FredMacroWorker(BaseWorker):
     async def run_once(
         self,
         series_ids: list[str] | None = None,
-        limit_points_per_series: int = 15,
+        limit_points_per_series: int | None = None,
         use_mock: bool = False,
         **kwargs,
     ) -> WorkerResult:
@@ -71,11 +71,12 @@ class FredMacroWorker(BaseWorker):
         upserted = 0
         errors: list[str] = []
 
+        effective_limit = kwargs.get("limit") if kwargs.get("limit") is not None else limit_points_per_series
         target_series = series_ids or list(FRED_SERIES.keys())
         logger.info(
-            "Starting FRED Macro harvest (SeriesCount=%d, LimitPoints=%d, Mock=%s)",
+            "Starting FRED Macro harvest (SeriesCount=%d, LimitPoints=%s, Mock=%s)",
             len(target_series),
-            limit_points_per_series,
+            effective_limit if effective_limit is not None else "MAX_HISTORY",
             use_mock,
         )
 
@@ -89,13 +90,12 @@ class FredMacroWorker(BaseWorker):
                     )
                     try:
                         points = await self._fetch_or_simulate_series(
-                            sid, meta, limit=limit_points_per_series, use_mock=use_mock
+                            sid, meta, limit=effective_limit, use_mock=use_mock
                         )
                         harvested += len(points)
 
-                        for pt in points:
-                            await self._upsert_macro_point(db, pt)
-                            upserted += 1
+                        up_cnt = await db.upsert_macro_indicators(points)
+                        upserted += up_cnt
 
                         logger.info("Ingested %d points for FRED series %s (%s)", len(points), sid, meta["name"])
                     except Exception as e:
@@ -120,7 +120,7 @@ class FredMacroWorker(BaseWorker):
         )
 
     async def _fetch_or_simulate_series(
-        self, series_id: str, meta: dict[str, str], limit: int = 15, use_mock: bool = False
+        self, series_id: str, meta: dict[str, str], limit: int | None = None, use_mock: bool = False
     ) -> list[dict[str, Any]]:
         """Fetch series from public FRED CSV download or simulate realistic economic numbers."""
         if use_mock or self.settings.simulation_mode:
@@ -151,7 +151,7 @@ class FredMacroWorker(BaseWorker):
                                     "frequency": meta["freq"],
                                     "units": meta["units"],
                                 })
-                                if len(valid_points) >= limit:
+                                if limit is not None and len(valid_points) >= limit:
                                     break
                             except ValueError:
                                 continue
@@ -164,7 +164,7 @@ class FredMacroWorker(BaseWorker):
             return self._generate_mock_series_points(series_id, meta, limit)
 
     def _generate_mock_series_points(
-        self, series_id: str, meta: dict[str, str], limit: int = 15
+        self, series_id: str, meta: dict[str, str], limit: int | None = None
     ) -> list[dict[str, Any]]:
         """Generate statistically realistic macroeconomic numbers."""
         base_yields = {
@@ -177,7 +177,8 @@ class FredMacroWorker(BaseWorker):
         results: list[dict[str, Any]] = []
 
         from datetime import timedelta
-        for i in range(limit):
+        pts_count = limit if limit is not None else 15
+        for i in range(pts_count):
             d = today - timedelta(days=i)
             # Skip weekend days for daily interest rate series
             if meta["freq"] == "daily" and d.weekday() >= 5:

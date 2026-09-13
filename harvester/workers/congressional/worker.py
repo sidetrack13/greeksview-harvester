@@ -38,21 +38,31 @@ class CongressionalWorker(BaseWorker):
         house: bool = True,
         senate: bool = True,
         year: int | None = None,
+        all_years: bool = True,
         limit: int | None = None,
         **kwargs,
     ) -> WorkerResult:
         """Run single ingestion pass for House and/or Senate disclosures."""
         start_time = time.time()
-        target_year = year or datetime.now(UTC).year
         errors: list[str] = []
         harvested = 0
         upserted = 0
 
+        current_year = datetime.now(UTC).year
+        effective_all_years = kwargs.get("all_years", all_years)
+        if year is not None:
+            target_years = [year]
+        elif effective_all_years:
+            target_years = list(range(current_year, self.settings.stock_act_inception_year - 1, -1))
+        else:
+            target_years = [current_year]
+
         logger.info(
-            "Starting Congressional harvest (Year=%d, House=%s, Senate=%s)",
-            target_year,
+            "Starting Congressional harvest (Years=%s, House=%s, Senate=%s, Limit=%s)",
+            target_years,
             house,
             senate,
+            limit if limit is not None else "UNLIMITED",
         )
 
         use_mock = kwargs.get("use_mock", False) or self.settings.simulation_mode
@@ -63,25 +73,26 @@ class CongressionalWorker(BaseWorker):
                 max_retries=self.settings.http_max_retries,
                 max_concurrency=self.settings.max_concurrent_downloads,
             ) as http_client:
-                if house:
-                    try:
-                        hp = HousePipeline(db=db, http_client=http_client, settings=self.settings)
-                        h_report = await hp.run(year=target_year, limit=limit, use_mock=use_mock)
-                        harvested += h_report.filings_parsed
-                        upserted += h_report.transactions_extracted
-                    except Exception as e:
-                        logger.error("House ingestion failed: %s", e)
-                        errors.append(f"House: {str(e)}")
+                for target_year in target_years:
+                    if house:
+                        try:
+                            hp = HousePipeline(db=db, http_client=http_client, settings=self.settings)
+                            h_report = await hp.run(year=target_year, limit=limit, use_mock=use_mock)
+                            harvested += h_report.filings_parsed
+                            upserted += h_report.transactions_extracted
+                        except Exception as e:
+                            logger.error("House ingestion failed for %d: %s", target_year, e)
+                            errors.append(f"House ({target_year}): {str(e)}")
 
-                if senate:
-                    try:
-                        sp = SenatePipeline(db=db, http_client=http_client, settings=self.settings)
-                        s_report = await sp.run(year=target_year, limit=limit, use_mock=use_mock)
-                        harvested += s_report.filings_parsed
-                        upserted += s_report.transactions_extracted
-                    except Exception as e:
-                        logger.error("Senate ingestion failed: %s", e)
-                        errors.append(f"Senate: {str(e)}")
+                    if senate:
+                        try:
+                            sp = SenatePipeline(db=db, http_client=http_client, settings=self.settings)
+                            s_report = await sp.run(year=target_year, limit=limit, use_mock=use_mock)
+                            harvested += s_report.filings_parsed
+                            upserted += s_report.transactions_extracted
+                        except Exception as e:
+                            logger.error("Senate ingestion failed for %d: %s", target_year, e)
+                            errors.append(f"Senate ({target_year}): {str(e)}")
 
         except Exception as e:
             logger.error("Database or network setup failed: %s", e)
@@ -97,7 +108,7 @@ class CongressionalWorker(BaseWorker):
             records_upserted=upserted,
             duration_seconds=duration,
             errors=errors,
-            metadata={"year": target_year, "house": house, "senate": senate},
+            metadata={"years": target_years, "house": house, "senate": senate},
         )
 
     async def health(self) -> dict[str, Any]:

@@ -47,7 +47,7 @@ class CboeOptionsWorker(BaseWorker):
 
     async def run_once(
         self,
-        days_back: int = 5,
+        days_back: int = 252,
         use_mock: bool = False,
         **kwargs,
     ) -> WorkerResult:
@@ -57,9 +57,10 @@ class CboeOptionsWorker(BaseWorker):
         upserted = 0
         errors: list[str] = []
 
+        effective_days = kwargs.get("days_back") or days_back
         logger.info(
             "Starting CBOE Options harvest (DaysBack=%d, Mock=%s)",
-            days_back,
+            effective_days,
             use_mock,
         )
 
@@ -71,22 +72,26 @@ class CboeOptionsWorker(BaseWorker):
                 today = datetime.now(UTC).date()
                 trading_days: list[str] = []
                 cur = today
-                while len(trading_days) < days_back:
+                while len(trading_days) < effective_days:
                     if cur.weekday() < 5:  # Monday to Friday
                         trading_days.append(cur.isoformat())
                     cur -= timedelta(days=1)
 
-                for date_str in trading_days:
-                    try:
-                        record = await self._fetch_or_simulate_cboe_day(date_str, use_mock=use_mock)
-                        harvested += 1
+                sem = asyncio.Semaphore(15)
 
-                        await self._upsert_cboe_record(db, record)
-                        upserted += 1
-                        logger.info("Ingested CBOE stats for date %s", date_str)
-                    except Exception as e:
-                        logger.error("Failed to ingest CBOE data for %s: %s", date_str, e)
-                        errors.append(f"{date_str}: {str(e)}")
+                async def _fetch_day(date_str: str) -> None:
+                    nonlocal harvested, upserted
+                    async with sem:
+                        try:
+                            record = await self._fetch_or_simulate_cboe_day(date_str, use_mock=use_mock)
+                            harvested += 1
+                            await self._upsert_cboe_record(db, record)
+                            upserted += 1
+                        except Exception as e:
+                            logger.error("Failed to ingest CBOE data for %s: %s", date_str, e)
+                            errors.append(f"{date_str}: {str(e)}")
+
+                await asyncio.gather(*[_fetch_day(d) for d in trading_days])
 
         except Exception as e:
             logger.error("CBOE worker infrastructure failure: %s", e)
@@ -103,7 +108,7 @@ class CboeOptionsWorker(BaseWorker):
             duration_seconds=duration,
             errors=errors,
             metadata={
-                "days_back": days_back,
+                "days_back": effective_days,
                 "trading_days": trading_days,
             },
         )

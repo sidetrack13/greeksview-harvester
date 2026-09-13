@@ -50,7 +50,7 @@ class SecEdgarWorker(BaseWorker):
         form4: bool = True,
         form13f: bool = True,
         tickers: list[str] | None = None,
-        limit: int = 50,
+        limit: int | None = None,
         **kwargs,
     ) -> WorkerResult:
         """Execute SEC EDGAR daily submission sweep."""
@@ -59,14 +59,20 @@ class SecEdgarWorker(BaseWorker):
         upserted = 0
         errors: list[str] = []
 
+        sample_tickers = tickers or [
+            "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA",
+            "SPY", "QQQ", "AMD", "AVGO", "COST", "NFLX", "JPM", "V", "WMT",
+        ]
+        effective_limit = kwargs.get("limit") if kwargs.get("limit") is not None else limit
+        target_tickers = sample_tickers[:effective_limit] if effective_limit is not None else sample_tickers
+
         logger.info(
-            "Starting SEC EDGAR harvest (Form4=%s, Form13F=%s, Limit=%d)",
+            "Starting SEC EDGAR harvest (Form4=%s, Form13F=%s, Tickers=%d, Limit=%s)",
             form4,
             form13f,
-            limit,
+            len(target_tickers),
+            effective_limit if effective_limit is not None else "UNLIMITED",
         )
-
-        sample_tickers = tickers or ["NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA"]
 
         try:
             async with DatabaseManager(self.settings) as db:
@@ -76,7 +82,7 @@ class SecEdgarWorker(BaseWorker):
                 async with httpx.AsyncClient(headers={"User-Agent": SEC_USER_AGENT}, timeout=15.0) as client:
                     if form4:
                         f4_harvested, f4_upserted, f4_errs = await self._harvest_form4(
-                            client, db, sample_tickers, limit
+                            client, db, target_tickers, len(target_tickers)
                         )
                         harvested += f4_harvested
                         upserted += f4_upserted
@@ -84,7 +90,7 @@ class SecEdgarWorker(BaseWorker):
 
                     if form13f:
                         f13_harvested, f13_upserted, f13_errs = await self._harvest_form13f(
-                            client, db, limit
+                            client, db, effective_limit or 50
                         )
                         harvested += f13_harvested
                         upserted += f13_upserted

@@ -47,7 +47,8 @@ class FinraDarkPoolWorker(BaseWorker):
         self,
         symbols: list[str] | None = None,
         week_start: str | None = None,
-        limit: int = 50,
+        weeks_back: int | None = None,
+        limit: int | None = None,
         use_mock: bool = False,
         **kwargs,
     ) -> WorkerResult:
@@ -58,19 +59,26 @@ class FinraDarkPoolWorker(BaseWorker):
         errors: list[str] = []
 
         target_symbols = symbols or DEFAULT_BENCHMARK_SYMBOLS
-        # If week_start is not specified, calculate the most recent completed Monday
-        if not week_start:
+        effective_limit = kwargs.get("limit") if kwargs.get("limit") is not None else limit
+        symbols_to_process = target_symbols[:effective_limit] if effective_limit is not None else target_symbols
+
+        weeks_to_process: list[str] = []
+        if week_start:
+            weeks_to_process = [week_start]
+        else:
+            w_back = kwargs.get("weeks_back") or weeks_back or 1
             today = datetime.now(UTC).date()
-            # Most recent Monday (or previous week if today is Monday)
             offset = (today.weekday() - 0) % 7 or 7
-            target_monday = today - timedelta(days=offset)
-            week_start = target_monday.isoformat()
+            cur_monday = today - timedelta(days=offset)
+            for _ in range(w_back):
+                weeks_to_process.append(cur_monday.isoformat())
+                cur_monday -= timedelta(days=7)
 
         logger.info(
-            "Starting FINRA OTC Dark Pool harvest (Week=%s, Symbols=%d, Limit=%d, Mock=%s)",
-            week_start,
-            len(target_symbols),
-            limit,
+            "Starting FINRA OTC Dark Pool harvest (Weeks=%d, Symbols=%d, Limit=%s, Mock=%s)",
+            len(weeks_to_process),
+            len(symbols_to_process),
+            effective_limit if effective_limit is not None else "UNLIMITED",
             use_mock,
         )
 
@@ -78,22 +86,20 @@ class FinraDarkPoolWorker(BaseWorker):
             async with DatabaseManager(self.settings) as db:
                 await db.initialize_tables()
 
-                # Process symbols up to limit
-                symbols_to_process = target_symbols[:limit]
+                for w_date in weeks_to_process:
+                    for sym in symbols_to_process:
+                        try:
+                            record = await self._fetch_or_simulate_otc_data(
+                                sym, w_date, use_mock=use_mock
+                            )
+                            harvested += 1
 
-                for sym in symbols_to_process:
-                    try:
-                        record = await self._fetch_or_simulate_otc_data(
-                            sym, week_start, use_mock=use_mock
-                        )
-                        harvested += 1
-
-                        # Upsert into database
-                        await self._upsert_record(db, record)
-                        upserted += 1
-                    except Exception as e:
-                        logger.error("Error processing FINRA OTC for %s: %s", sym, e)
-                        errors.append(f"{sym}: {str(e)}")
+                            # Upsert into database
+                            await self._upsert_record(db, record)
+                            upserted += 1
+                        except Exception as e:
+                            logger.error("Error processing FINRA OTC for %s (%s): %s", sym, w_date, e)
+                            errors.append(f"{sym}_{w_date}: {str(e)}")
 
         except Exception as e:
             logger.error("FINRA worker infrastructure failure: %s", e)
