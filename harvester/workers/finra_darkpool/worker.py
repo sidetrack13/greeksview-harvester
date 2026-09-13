@@ -182,24 +182,8 @@ class FinraDarkPoolWorker(BaseWorker):
         }
 
     async def _upsert_record(self, db: DatabaseManager, record: dict[str, Any]) -> None:
-        """Insert or replace weekly OTC record."""
-        query = """
-        INSERT OR REPLACE INTO finra_otc_volume (
-            id, symbol, week_start_date, tier, otc_volume,
-            total_trades, total_market_volume, dark_pool_share_pct, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-        """
-        await db.execute(
-            query,
-            record["id"],
-            record["symbol"],
-            record["week_start_date"],
-            record["tier"],
-            record["otc_volume"],
-            record["total_trades"],
-            record["total_market_volume"],
-            record["dark_pool_share_pct"],
-        )
+        """Insert or update weekly OTC record via DatabaseManager."""
+        await db.upsert_finra_otc_volume([record])
 
     async def health(self) -> dict[str, Any]:
         """Perform endpoint and database connectivity health checks."""

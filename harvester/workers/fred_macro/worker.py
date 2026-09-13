@@ -197,23 +197,8 @@ class FredMacroWorker(BaseWorker):
         return results
 
     async def _upsert_macro_point(self, db: DatabaseManager, point: dict[str, Any]) -> None:
-        """Upsert macroeconomic data point."""
-        query = """
-        INSERT OR REPLACE INTO macro_indicators (
-            id, series_id, indicator_name, date, value,
-            frequency, units, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-        """
-        await db.execute(
-            query,
-            point["id"],
-            point["series_id"],
-            point["indicator_name"],
-            point["date"],
-            point["value"],
-            point["frequency"],
-            point["units"],
-        )
+        """Upsert macroeconomic data point via DatabaseManager."""
+        await db.upsert_macro_indicators([point])
 
     async def health(self) -> dict[str, Any]:
         """Perform database and FRED server health checks."""

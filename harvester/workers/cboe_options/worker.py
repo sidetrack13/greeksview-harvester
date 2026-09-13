@@ -172,26 +172,8 @@ class CboeOptionsWorker(BaseWorker):
         }
 
     async def _upsert_cboe_record(self, db: DatabaseManager, record: dict[str, Any]) -> None:
-        """Upsert CBOE daily row into database."""
-        query = """
-        INSERT OR REPLACE INTO cboe_daily_options (
-            id, trade_date, total_call_volume, total_put_volume,
-            total_volume, equity_pc_ratio, index_pc_ratio,
-            total_pc_ratio, vix_volume, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-        """
-        await db.execute(
-            query,
-            record["id"],
-            record["trade_date"],
-            record["total_call_volume"],
-            record["total_put_volume"],
-            record["total_volume"],
-            record["equity_pc_ratio"],
-            record["index_pc_ratio"],
-            record["total_pc_ratio"],
-            record["vix_volume"],
-        )
+        """Upsert CBOE daily row into database via DatabaseManager."""
+        await db.upsert_cboe_daily_options([record])
 
     async def health(self) -> dict[str, Any]:
         """Perform database and upstream endpoint verification."""

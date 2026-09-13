@@ -614,3 +614,379 @@ class DatabaseManager:
             "by_type": by_type,
             "by_chamber": by_chamber,
         }
+
+    async def upsert_insider_trades(self, records: list[dict[str, Any]]) -> int:
+        """Upsert Form 4 insider trading disclosures."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO insider_trades (
+                id, symbol, filing_date, transaction_date, reporting_owner,
+                owner_title, is_director, is_officer, is_ten_percent,
+                transaction_type, shares, price_per_share, shares_owned_following,
+                sec_form, filing_url, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT (id) DO UPDATE SET
+                symbol = excluded.symbol,
+                filing_date = excluded.filing_date,
+                transaction_date = excluded.transaction_date,
+                reporting_owner = excluded.reporting_owner,
+                owner_title = excluded.owner_title,
+                is_director = excluded.is_director,
+                is_officer = excluded.is_officer,
+                is_ten_percent = excluded.is_ten_percent,
+                transaction_type = excluded.transaction_type,
+                shares = excluded.shares,
+                price_per_share = excluded.price_per_share,
+                shares_owned_following = excluded.shares_owned_following,
+                sec_form = excluded.sec_form,
+                filing_url = excluded.filing_url
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["id"],
+                        r["symbol"],
+                        r["filing_date"],
+                        r.get("transaction_date"),
+                        r["reporting_owner"],
+                        r.get("owner_title"),
+                        1 if r.get("is_director") else 0,
+                        1 if r.get("is_officer") else 0,
+                        1 if r.get("is_ten_percent") else 0,
+                        r["transaction_type"],
+                        r.get("shares"),
+                        r.get("price_per_share"),
+                        r.get("shares_owned_following"),
+                        r.get("sec_form", "4"),
+                        r.get("filing_url"),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO insider_trades (
+                id, symbol, filing_date, transaction_date, reporting_owner,
+                owner_title, is_director, is_officer, is_ten_percent,
+                transaction_type, shares, price_per_share, shares_owned_following,
+                sec_form, filing_url, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                symbol = EXCLUDED.symbol,
+                filing_date = EXCLUDED.filing_date,
+                transaction_date = EXCLUDED.transaction_date,
+                reporting_owner = EXCLUDED.reporting_owner,
+                owner_title = EXCLUDED.owner_title,
+                is_director = EXCLUDED.is_director,
+                is_officer = EXCLUDED.is_officer,
+                is_ten_percent = EXCLUDED.is_ten_percent,
+                transaction_type = EXCLUDED.transaction_type,
+                shares = EXCLUDED.shares,
+                price_per_share = EXCLUDED.price_per_share,
+                shares_owned_following = EXCLUDED.shares_owned_following,
+                sec_form = EXCLUDED.sec_form,
+                filing_url = EXCLUDED.filing_url
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["id"],
+                        r["symbol"],
+                        r["filing_date"],
+                        r.get("transaction_date"),
+                        r["reporting_owner"],
+                        r.get("owner_title"),
+                        bool(r.get("is_director")),
+                        bool(r.get("is_officer")),
+                        bool(r.get("is_ten_percent")),
+                        r["transaction_type"],
+                        r.get("shares"),
+                        r.get("price_per_share"),
+                        r.get("shares_owned_following"),
+                        r.get("sec_form", "4"),
+                        r.get("filing_url"),
+                    )
+                    count += 1
+        return count
+
+    async def upsert_institutional_holdings(self, records: list[dict[str, Any]]) -> int:
+        """Upsert Form 13F institutional holdings."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO institutional_holdings (
+                id, cik, institution_name, report_calendar_or_quarter,
+                symbol, cusip, shares, market_value, investment_discretion,
+                voting_authority_sole, sec_form, filing_url, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT (id) DO UPDATE SET
+                shares = excluded.shares,
+                market_value = excluded.market_value,
+                investment_discretion = excluded.investment_discretion,
+                voting_authority_sole = excluded.voting_authority_sole,
+                filing_url = excluded.filing_url
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["id"],
+                        r["cik"],
+                        r["institution_name"],
+                        r["report_calendar_or_quarter"],
+                        r["symbol"],
+                        r.get("cusip"),
+                        r["shares"],
+                        r.get("market_value"),
+                        r.get("investment_discretion"),
+                        r.get("voting_authority_sole"),
+                        r.get("sec_form", "13F-HR"),
+                        r.get("filing_url"),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO institutional_holdings (
+                id, cik, institution_name, report_calendar_or_quarter,
+                symbol, cusip, shares, market_value, investment_discretion,
+                voting_authority_sole, sec_form, filing_url, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                shares = EXCLUDED.shares,
+                market_value = EXCLUDED.market_value,
+                investment_discretion = EXCLUDED.investment_discretion,
+                voting_authority_sole = EXCLUDED.voting_authority_sole,
+                filing_url = EXCLUDED.filing_url
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["id"],
+                        r["cik"],
+                        r["institution_name"],
+                        r["report_calendar_or_quarter"],
+                        r["symbol"],
+                        r.get("cusip"),
+                        r["shares"],
+                        r.get("market_value"),
+                        r.get("investment_discretion"),
+                        r.get("voting_authority_sole"),
+                        r.get("sec_form", "13F-HR"),
+                        r.get("filing_url"),
+                    )
+                    count += 1
+        return count
+
+    async def upsert_finra_otc_volume(self, records: list[dict[str, Any]]) -> int:
+        """Upsert weekly FINRA OTC volume records."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO finra_otc_volume (
+                id, symbol, week_start_date, tier, otc_volume,
+                total_trades, total_market_volume, dark_pool_share_pct, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT (id) DO UPDATE SET
+                otc_volume = excluded.otc_volume,
+                total_trades = excluded.total_trades,
+                total_market_volume = excluded.total_market_volume,
+                dark_pool_share_pct = excluded.dark_pool_share_pct
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["id"],
+                        r["symbol"],
+                        r["week_start_date"],
+                        r["tier"],
+                        r["otc_volume"],
+                        r["total_trades"],
+                        r.get("total_market_volume"),
+                        r.get("dark_pool_share_pct"),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO finra_otc_volume (
+                id, symbol, week_start_date, tier, otc_volume,
+                total_trades, total_market_volume, dark_pool_share_pct, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                otc_volume = EXCLUDED.otc_volume,
+                total_trades = EXCLUDED.total_trades,
+                total_market_volume = EXCLUDED.total_market_volume,
+                dark_pool_share_pct = EXCLUDED.dark_pool_share_pct
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["id"],
+                        r["symbol"],
+                        r["week_start_date"],
+                        r["tier"],
+                        r["otc_volume"],
+                        r["total_trades"],
+                        r.get("total_market_volume"),
+                        r.get("dark_pool_share_pct"),
+                    )
+                    count += 1
+        return count
+
+    async def upsert_cboe_daily_options(self, records: list[dict[str, Any]]) -> int:
+        """Upsert CBOE daily options statistics."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO cboe_daily_options (
+                id, trade_date, total_call_volume, total_put_volume,
+                total_volume, equity_pc_ratio, index_pc_ratio,
+                total_pc_ratio, vix_volume, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT (trade_date) DO UPDATE SET
+                total_call_volume = excluded.total_call_volume,
+                total_put_volume = excluded.total_put_volume,
+                total_volume = excluded.total_volume,
+                equity_pc_ratio = excluded.equity_pc_ratio,
+                index_pc_ratio = excluded.index_pc_ratio,
+                total_pc_ratio = excluded.total_pc_ratio,
+                vix_volume = excluded.vix_volume
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["id"],
+                        r["trade_date"],
+                        r["total_call_volume"],
+                        r["total_put_volume"],
+                        r["total_volume"],
+                        r.get("equity_pc_ratio"),
+                        r.get("index_pc_ratio"),
+                        r.get("total_pc_ratio"),
+                        r.get("vix_volume"),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO cboe_daily_options (
+                id, trade_date, total_call_volume, total_put_volume,
+                total_volume, equity_pc_ratio, index_pc_ratio,
+                total_pc_ratio, vix_volume, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+            ON CONFLICT (trade_date) DO UPDATE SET
+                total_call_volume = EXCLUDED.total_call_volume,
+                total_put_volume = EXCLUDED.total_put_volume,
+                total_volume = EXCLUDED.total_volume,
+                equity_pc_ratio = EXCLUDED.equity_pc_ratio,
+                index_pc_ratio = EXCLUDED.index_pc_ratio,
+                total_pc_ratio = EXCLUDED.total_pc_ratio,
+                vix_volume = EXCLUDED.vix_volume
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["id"],
+                        r["trade_date"],
+                        r["total_call_volume"],
+                        r["total_put_volume"],
+                        r["total_volume"],
+                        r.get("equity_pc_ratio"),
+                        r.get("index_pc_ratio"),
+                        r.get("total_pc_ratio"),
+                        r.get("vix_volume"),
+                    )
+                    count += 1
+        return count
+
+    async def upsert_macro_indicators(self, records: list[dict[str, Any]]) -> int:
+        """Upsert macroeconomic indicator series."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO macro_indicators (
+                id, series_id, indicator_name, date, value,
+                frequency, units, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT (id) DO UPDATE SET
+                value = excluded.value,
+                frequency = excluded.frequency,
+                units = excluded.units
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["id"],
+                        r["series_id"],
+                        r["indicator_name"],
+                        r["date"],
+                        r["value"],
+                        r.get("frequency", "daily"),
+                        r.get("units", "Percent"),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO macro_indicators (
+                id, series_id, indicator_name, date, value,
+                frequency, units, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                value = EXCLUDED.value,
+                frequency = EXCLUDED.frequency,
+                units = EXCLUDED.units
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["id"],
+                        r["series_id"],
+                        r["indicator_name"],
+                        r["date"],
+                        r["value"],
+                        r.get("frequency", "daily"),
+                        r.get("units", "Percent"),
+                    )
+                    count += 1
+        return count
