@@ -406,15 +406,24 @@ class DatabaseManager:
             logger.info("Connected to SQLite database: %s", target)
         else:
             ssl_opt = self.settings.pgssl.lower() != "false"
+            schema = self.settings.database_schema
+
+            async def _init_connection(conn: Any) -> None:
+                await conn.execute(f'SET search_path = "{schema}", public;')
+
             self._pg_pool = await asyncpg.create_pool(
                 self.settings.database_url,
                 ssl=ssl_opt,
                 min_size=1,
                 max_size=10,
+                init=_init_connection,
+                server_settings={"search_path": f'"{schema}", public'},
             )
             async with self._pg_pool.acquire() as conn:
+                await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}";')
+                await conn.execute(f'SET search_path = "{schema}", public;')
                 await conn.execute(POSTGRES_SCHEMA)
-            logger.info("Connected to PostgreSQL pool: %s", self.settings.database_url.split("@")[-1])
+            logger.info("Connected to PostgreSQL pool (schema=%s): %s", schema, self.settings.database_url.split("@")[-1])
 
     async def close(self) -> None:
         """Close database connection or pool."""

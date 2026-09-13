@@ -64,6 +64,9 @@ async def sync_sqlite_to_postgres(
 
     # 1. Initialize PostgreSQL schema (idempotent)
     async with pg_manager._pg_pool.acquire() as conn:
+        schema = pg_manager.settings.database_schema
+        await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}";')
+        await conn.execute(f'SET search_path = "{schema}", public;')
         await conn.execute(POSTGRES_SCHEMA)
 
     summary: dict[str, dict[str, Any]] = {}

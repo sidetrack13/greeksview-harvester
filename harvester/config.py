@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = ""
-    database_schema: str = "public"
+    database_schema: str = "gv"
     pgssl: str = "false"
 
     # House Clerk Endpoints
