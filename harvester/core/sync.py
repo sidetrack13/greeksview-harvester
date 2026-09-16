@@ -17,6 +17,8 @@ def _parse_date(val: Any) -> date | None:
     """Safely parse SQLite date string to datetime.date object."""
     if val is None or val == "":
         return None
+    if isinstance(val, datetime):
+        return val.date()
     if isinstance(val, date):
         return val
     s = str(val).strip().split(" ")[0]
@@ -29,6 +31,33 @@ def _parse_date(val: Any) -> date | None:
             except ValueError:
                 continue
     return None
+
+
+def _parse_datetime(val: Any) -> datetime | None:
+    """Safely parse SQLite timestamp string or object to datetime.datetime object."""
+    if val is None or val == "":
+        return None
+    if isinstance(val, datetime):
+        return val
+    if isinstance(val, date):
+        return datetime(val.year, val.month, val.day)
+    s = str(val).strip()
+    try:
+        return datetime.fromisoformat(s)
+    except Exception:
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%SZ",
+            "%Y-%m-%d",
+        ):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+    return None
+
 
 
 def _clean_str(val: Any) -> str | None:
@@ -119,6 +148,10 @@ async def sync_sqlite_to_postgres(
                 row_count = cur.execute(
                     f"SELECT COUNT(*) FROM {tbl} WHERE trade_date >= ?", (cutoff_date,)
                 ).fetchone()[0]
+            elif cutoff_date and tbl == "stock_bars_intraday":
+                row_count = cur.execute(
+                    f"SELECT COUNT(*) FROM {tbl} WHERE bar_timestamp >= ?", (cutoff_date,)
+                ).fetchone()[0]
             else:
                 row_count = cur.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
 
@@ -150,7 +183,9 @@ async def sync_sqlite_to_postgres(
                     sqlite_conn, pg_manager._pg_pool, batch_size, cutoff_date=cutoff_date
                 )
             elif tbl == "stock_bars_intraday":
-                synced = await _sync_stock_bars_intraday(sqlite_conn, pg_manager._pg_pool, batch_size)
+                synced = await _sync_stock_bars_intraday(
+                    sqlite_conn, pg_manager._pg_pool, batch_size, cutoff_date=cutoff_date
+                )
             elif tbl == "options_chains_eod":
                 synced = await _sync_options_chains_eod(
                     sqlite_conn, pg_manager._pg_pool, batch_size, cutoff_date=cutoff_date
@@ -566,7 +601,12 @@ async def _sync_stock_bars_daily(
     return total
 
 
-async def _sync_stock_bars_intraday(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
+async def _sync_stock_bars_intraday(
+    sqlite_conn: sqlite3.Connection,
+    pg_pool: Any,
+    batch_size: int,
+    cutoff_date: str | None = None,
+) -> int:
     query = """
     INSERT INTO stock_bars_intraday (
         symbol, bar_timestamp, interval, open, high, low, close, volume, created_at
@@ -579,7 +619,12 @@ async def _sync_stock_bars_intraday(sqlite_conn: sqlite3.Connection, pg_pool: An
         volume = EXCLUDED.volume
     """
     cur = sqlite_conn.cursor()
-    cur.execute("SELECT symbol, bar_timestamp, interval, open, high, low, close, volume FROM stock_bars_intraday")
+    sql = "SELECT symbol, bar_timestamp, interval, open, high, low, close, volume FROM stock_bars_intraday"
+    params: list[Any] = []
+    if cutoff_date:
+        sql += " WHERE bar_timestamp >= ?"
+        params.append(cutoff_date)
+    cur.execute(sql, params)
     total = 0
     async with pg_pool.acquire() as conn:
         while True:
@@ -588,9 +633,12 @@ async def _sync_stock_bars_intraday(sqlite_conn: sqlite3.Connection, pg_pool: An
                 break
             batch = []
             for r in rows:
+                b_ts = _parse_datetime(r["bar_timestamp"])
+                if b_ts is None:
+                    continue
                 batch.append((
                     _clean_str(r["symbol"]),
-                    str(r["bar_timestamp"]),
+                    b_ts,
                     _clean_str(r["interval"]),
                     float(r["open"]),
                     float(r["high"]),

@@ -1,9 +1,10 @@
 """Asynchronous database manager supporting PostgreSQL and SQLite with idempotent migrations."""
 
+import contextlib
 import csv
 import gzip
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -1328,10 +1329,14 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
+                    t_date = r["trade_date"]
+                    if isinstance(t_date, str):
+                        with contextlib.suppress(Exception):
+                            t_date = date.fromisoformat(t_date.split(" ")[0])
                     await conn.execute(
                         query,
                         r["symbol"].upper(),
-                        str(r["trade_date"]),
+                        t_date,
                         float(r["open"]),
                         float(r["high"]),
                         float(r["low"]),
@@ -1394,10 +1399,14 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
+                    b_ts = r["bar_timestamp"]
+                    if isinstance(b_ts, str):
+                        with contextlib.suppress(Exception):
+                            b_ts = datetime.fromisoformat(b_ts)
                     await conn.execute(
                         query,
                         r["symbol"].upper(),
-                        str(r["bar_timestamp"]),
+                        b_ts,
                         r["interval"],
                         float(r["open"]),
                         float(r["high"]),
@@ -1489,12 +1498,20 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
+                    t_date = r["trade_date"]
+                    if isinstance(t_date, str):
+                        with contextlib.suppress(Exception):
+                            t_date = date.fromisoformat(t_date.split(" ")[0])
+                    exp_date = r["expiration"]
+                    if isinstance(exp_date, str):
+                        with contextlib.suppress(Exception):
+                            exp_date = date.fromisoformat(exp_date.split(" ")[0])
                     await conn.execute(
                         query,
                         r["contract_id"],
                         r["symbol"].upper(),
-                        str(r["trade_date"]),
-                        str(r["expiration"]),
+                        t_date,
+                        exp_date,
                         float(r["strike"]),
                         r["option_type"].lower(),
                         float(r["last_price"]) if r.get("last_price") is not None else None,

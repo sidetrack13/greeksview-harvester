@@ -11,6 +11,7 @@ from harvester.cli import app
 from harvester.core.sync import (
     _clean_str,
     _parse_date,
+    _parse_datetime,
     sync_sqlite_to_postgres,
 )
 
@@ -29,11 +30,25 @@ def test_parse_date():
     """Test date parsing helper across various string and object inputs."""
     assert _parse_date(None) is None
     assert _parse_date("") is None
+    assert _parse_date(datetime(2024, 5, 15, 10, 0, 0)) == date(2024, 5, 15)
     assert _parse_date(date(2024, 5, 15)) == date(2024, 5, 15)
     assert _parse_date("2024-05-15") == date(2024, 5, 15)
     assert _parse_date("2024-05-15 10:30:00") == date(2024, 5, 15)
     assert _parse_date("05/15/2024") == date(2024, 5, 15)
     assert _parse_date("invalid-date") is None
+
+
+def test_parse_datetime():
+    """Test datetime parsing helper across various string and object inputs."""
+    assert _parse_datetime(None) is None
+    assert _parse_datetime("") is None
+    dt = datetime(2026, 9, 16, 2, 30, 45)
+    assert _parse_datetime(dt) == dt
+    assert _parse_datetime(date(2026, 9, 16)) == datetime(2026, 9, 16, 0, 0, 0)
+    assert _parse_datetime("2026-09-16 02:30:45") == dt
+    assert _parse_datetime("2026-09-16T02:30:45") == dt
+    assert _parse_datetime("2026-09-16") == datetime(2026, 9, 16, 0, 0, 0)
+    assert _parse_datetime("invalid-datetime") is None
 
 
 def test_sync_sqlite_to_postgres_missing_file():
@@ -383,6 +398,8 @@ async def test_sync_alphavantage_tables(tmp_path):
     )
     """)
     cur.execute("INSERT INTO stock_bars_intraday VALUES ('SPY', '2024-06-14 16:00:00', '5min', 450.0, 451.0, 449.5, 450.5, 15000)")
+    cur.execute("INSERT INTO stock_bars_intraday VALUES ('SPY', 'bad-timestamp', '5min', 450.0, 451.0, 449.5, 450.5, 15000)")
+
 
     cur.execute("""
     CREATE TABLE options_chains_eod (
@@ -475,6 +492,13 @@ async def test_sync_alphavantage_tables(tmp_path):
         assert summary["etf_profiles"]["synced_count"] == 1
         assert summary["listing_status"]["synced_count"] == 1
 
+        # Verify stock_bars_intraday passes a real datetime.datetime instance (not str)
+        intraday_call = next(c.args[1] for c in mock_pg_conn.executemany.call_args_list if "stock_bars_intraday" in c.args[0])
+        assert len(intraday_call) == 1
+        assert isinstance(intraday_call[0][1], datetime)
+        assert not isinstance(intraday_call[0][1], str)
+
+
 
 @pytest.mark.asyncio
 async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
@@ -525,6 +549,16 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
     )
     """, (old_date,))
 
+    cur.execute("""
+    CREATE TABLE stock_bars_intraday (
+        symbol TEXT, bar_timestamp TEXT, interval TEXT, open REAL, high REAL, low REAL, close REAL, volume INTEGER
+    )
+    """)
+    recent_ts = f"{recent_date} 15:30:00"
+    old_ts = f"{old_date} 15:30:00"
+    cur.execute("INSERT INTO stock_bars_intraday VALUES ('SPY', ?, '5min', 450.0, 451.0, 449.5, 450.5, 15000)", (recent_ts,))
+    cur.execute("INSERT INTO stock_bars_intraday VALUES ('SPY', ?, '5min', 400.0, 401.0, 399.5, 400.5, 12000)", (old_ts,))
+
     conn.commit()
     conn.close()
 
@@ -549,7 +583,7 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
         summary_filtered = await sync_sqlite_to_postgres(
             pg_url="postgresql://user:pass@localhost:5432/testdb",
             sqlite_path=db_path,
-            target_tables=["stock_bars_daily", "cboe_daily_options", "options_chains_eod"],
+            target_tables=["stock_bars_daily", "cboe_daily_options", "options_chains_eod", "stock_bars_intraday"],
             days_back=30,
         )
 
@@ -559,6 +593,8 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
         assert summary_filtered["cboe_daily_options"]["synced_count"] == 1
         assert summary_filtered["options_chains_eod"]["sqlite_count"] == 1
         assert summary_filtered["options_chains_eod"]["synced_count"] == 1
+        assert summary_filtered["stock_bars_intraday"]["sqlite_count"] == 1
+        assert summary_filtered["stock_bars_intraday"]["synced_count"] == 1
 
         # Check that executed batches contain only recent records
         exec_calls = mock_pg_conn.executemany.call_args_list
@@ -566,12 +602,16 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
         assert len(options_batch) == 1
         assert options_batch[0][0] == "C_recent"
 
+        intraday_batch = next(c.args[1] for c in exec_calls if "stock_bars_intraday" in c.args[0])
+        assert len(intraday_batch) == 1
+        assert isinstance(intraday_batch[0][1], datetime)
+
         # 2. Test with days_back=None: all records should be synced
         mock_pg_conn.executemany.reset_mock()
         summary_all = await sync_sqlite_to_postgres(
             pg_url="postgresql://user:pass@localhost:5432/testdb",
             sqlite_path=db_path,
-            target_tables=["stock_bars_daily", "cboe_daily_options", "options_chains_eod"],
+            target_tables=["stock_bars_daily", "cboe_daily_options", "options_chains_eod", "stock_bars_intraday"],
             days_back=None,
         )
 
@@ -581,6 +621,8 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
         assert summary_all["cboe_daily_options"]["synced_count"] == 2
         assert summary_all["options_chains_eod"]["sqlite_count"] == 2
         assert summary_all["options_chains_eod"]["synced_count"] == 2
+        assert summary_all["stock_bars_intraday"]["sqlite_count"] == 2
+        assert summary_all["stock_bars_intraday"]["synced_count"] == 2
 
 
 def test_cli_sync_pg_days_back(tmp_path):
