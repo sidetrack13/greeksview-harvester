@@ -47,6 +47,7 @@ packages = ["harvester"]
 minversion = "8.0"
 addopts = "-ra -q --cov=harvester --cov-report=term-missing"
 testpaths = ["tests"]
+pythonpath = ["."]
 asyncio_mode = "auto"
 
 [tool.coverage.run]

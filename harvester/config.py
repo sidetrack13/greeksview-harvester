@@ -3,7 +3,24 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_HARVESTER_DIR = Path(__file__).resolve().parent.parent
+_SIBLING_GV_ENV = _HARVESTER_DIR.parent / "greeksview" / ".env"
+
+
+def _load_sibling_alphavantage_key() -> str:
+    """Read ALPHAVANTAGE_API_KEY from sibling greeksview .env if present and not otherwise configured."""
+    if _SIBLING_GV_ENV.is_file():
+        try:
+            for line in _SIBLING_GV_ENV.read_text().splitlines():
+                line = line.strip()
+                if line.startswith("ALPHAVANTAGE_API_KEY=") and not line.startswith("#"):
+                    return line.split("=", 1)[1].strip().strip("'\"")
+        except Exception:
+            pass
+    return ""
 
 
 class Settings(BaseSettings):
@@ -41,7 +58,7 @@ class Settings(BaseSettings):
     http_max_retries: int = 3
 
     # Alpha Vantage Settings
-    alphavantage_api_key: str = ""
+    alphavantage_api_key: str = Field(default_factory=_load_sibling_alphavantage_key)
     alphavantage_base_url: str = "https://www.alphavantage.co/query"
     alphavantage_max_per_second: int = 30
     alphavantage_rpm: int = 1200

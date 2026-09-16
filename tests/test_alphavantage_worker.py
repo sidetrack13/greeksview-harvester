@@ -23,6 +23,8 @@ from harvester.workers.alphavantage.pacer import (
 )
 from harvester.workers.alphavantage.worker import AlphaVantageWorker
 
+runner = CliRunner()
+
 # ---------------------------------------------------------------------------
 # 1. Pacer Unit Tests
 # ---------------------------------------------------------------------------
@@ -189,6 +191,19 @@ async def test_worker_metadata_and_health(tmp_path):
     assert health["worker"] == "alphavantage"
     assert health["api_key_configured"] is True
     assert health["status"] in ("healthy", "degraded")
+
+
+@pytest.mark.asyncio
+async def test_worker_run_once_fails_fast_when_no_api_key(tmp_path) -> None:
+    db_file = str(tmp_path / "missing_key.db")
+    settings = Settings(database_url=f"sqlite:///{db_file}", alphavantage_api_key="")
+    worker = AlphaVantageWorker(settings=settings)
+    worker.client.api_key = ""
+
+    result = await worker.run_once(use_mock=False)
+    assert result.status == "failed"
+    assert len(result.errors) == 1
+    assert "Alpha Vantage API key is missing" in result.errors[0]
 
 
 @pytest.mark.asyncio
@@ -413,4 +428,15 @@ async def test_client_internal_lifecycle_and_retry():
     assert http is not None
     await client.close()
     assert client._internal_client is None
+
+
+def test_cli_run_alphavantage_with_api_key(tmp_path) -> None:
+    db_file = str(tmp_path / "cli_key.db")
+    result = runner.invoke(
+        app,
+        ["run", "alphavantage", "--mock", "--symbols", "SPY", "--api-key", "CUSTOM_KEY", "--db-url", f"sqlite:///{db_file}"],
+    )
+    assert result.exit_code == 0
+    assert "SUCCESS" in result.stdout
+
 

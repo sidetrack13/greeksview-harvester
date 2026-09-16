@@ -475,6 +475,22 @@ class AlphaVantageWorker(BaseWorker):
             use_mock,
         )
 
+        if not use_mock and not self.client.api_key:
+            err_msg = (
+                "Alpha Vantage API key is missing. Set ALPHAVANTAGE_API_KEY in your environment, "
+                "configure it in .env (or ../greeksview/.env), or pass --api-key <key>. "
+                "For offline simulation, use --mock."
+            )
+            logger.error(err_msg)
+            return WorkerResult(
+                worker=self.name,
+                status="failed",
+                records_harvested=0,
+                records_upserted=0,
+                duration_seconds=round(time.time() - start_time, 2),
+                errors=[err_msg],
+            )
+
         try:
             async with DatabaseManager(self.settings) as db:
                 await db.initialize_tables()
