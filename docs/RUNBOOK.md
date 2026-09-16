@@ -69,6 +69,14 @@ uv run harvester run alphavantage --dataset intraday --symbols SPY,QQQ --limit 1
 # 3. Settled End-of-Day Options Chains
 uv run harvester run alphavantage --dataset options --symbols SPY,QQQ --days-back 30
 
+# High-Density Options Ingestion with Storage Optimizations (Saves 60%-75% Disk)
+# Filters strikes within +/-40% of spot and prunes dormant zero-volume & zero-OI contracts:
+uv run harvester run alphavantage --dataset options --symbols SPY,QQQ --days-back 252 --moneyness-band 40 --prune-inactive
+
+# Archive older options to compressed .csv.gz files and prune live database:
+uv run harvester archive-options --days-to-keep 90 --output-dir ./archives --prune
+
+
 # 4. Comprehensive Corporate Fundamentals & Earnings Statements
 uv run harvester run alphavantage --dataset fundamentals --symbols AAPL,MSFT,NVDA
 
