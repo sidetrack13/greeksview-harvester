@@ -192,3 +192,15 @@ def test_cli_main_block(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit) as exc_info:
         runpy.run_module("harvester.cli", run_name="__main__")
     assert exc_info.value.code == 0
+
+
+def test_cli_run_all_with_dataset_and_symbols(tmp_path) -> None:
+    db_file = str(tmp_path / "run_all.db")
+    result = runner.invoke(
+        app,
+        ["run-all", "--mock", "--dataset", "options", "--symbols", "SPY", "--db-url", f"sqlite:///{db_file}"],
+    )
+    assert result.exit_code == 0
+    assert "Consolidated Harvesting Results" in result.stdout
+    assert "alphavantage" in result.stdout
+

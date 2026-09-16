@@ -138,6 +138,8 @@ def run_command(
 def run_all_command(
     limit: Annotated[int | None, typer.Option("--limit", "-l", help="Record limit per worker (default: None for max history)")] = None,
     mock: Annotated[bool, typer.Option("--mock", help="Use synthetic mock data")] = False,
+    dataset: Annotated[str | None, typer.Option("--dataset", "-d", help="Alpha Vantage dataset filter (daily, options, all, etc.)")] = None,
+    symbols: Annotated[str | None, typer.Option("--symbols", "-s", help="Comma-separated ticker symbols (e.g. SPY,QQQ)")] = None,
     db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
 ) -> None:
     """Execute all registered harvesting workers in sequence."""
@@ -150,8 +152,13 @@ def run_all_command(
         for name in WORKER_REGISTRY:
             worker = get_worker(name, config=settings)
             console.print(f"[bold cyan]=> Running worker: {name}[/bold cyan]")
+            kwargs: dict[str, Any] = {"limit": limit, "use_mock": mock}
+            if dataset is not None:
+                kwargs["dataset"] = dataset
+            if symbols is not None:
+                kwargs["symbols"] = symbols
             try:
-                res = await worker.run_once(limit=limit, use_mock=mock)
+                res = await worker.run_once(**kwargs)
                 results.append(res)
             except Exception as e:
                 console.print(f"[bold red]Failed worker {name}: {e}[/bold red]")
