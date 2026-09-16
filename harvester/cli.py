@@ -63,7 +63,7 @@ def run_command(
     mock: Annotated[bool, typer.Option("--mock", help="Use synthetic mock/simulation data")] = False,
     year: Annotated[int | None, typer.Option("--year", "-y", help="Target calendar year")] = None,
     all_years: Annotated[bool, typer.Option("--all-years/--single-year", help="Sweep all historical years back to 2012 (default: True)")] = True,
-    days_back: Annotated[int | None, typer.Option("--days-back", help="Historical trading days back for CBOE (default: 252 for full year)")] = None,
+    days_back: Annotated[int | None, typer.Option("--days-back", help="Historical trading days back for CBOE or Alpha Vantage Options (default: 1 snapshot, or specify N days)")] = None,
     weeks_back: Annotated[int | None, typer.Option("--weeks-back", help="Historical weeks back for FINRA OTC (default: 52 for full year)")] = None,
     dataset: Annotated[str | None, typer.Option("--dataset", "-d", help="Dataset for Alpha Vantage (daily, intraday, options, fundamentals, actions, reference, all)")] = None,
     symbols: Annotated[str | None, typer.Option("--symbols", "-s", help="Comma-separated ticker symbols (e.g. SPY,QQQ,AAPL)")] = None,

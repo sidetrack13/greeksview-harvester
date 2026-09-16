@@ -199,12 +199,23 @@ class AlphaVantageWorker(BaseWorker):
         db: DatabaseManager,
         symbols: list[str],
         trade_dates: list[str] | None = None,
+        days_back: int | None = None,
         use_mock: bool = False,
     ) -> tuple[int, int]:
         """Download end-of-day options chains and persist to options_chains_eod."""
         harvested = 0
         upserted = 0
-        target_dates = trade_dates or [(datetime.now(UTC).date() - timedelta(days=1)).isoformat()]
+        if trade_dates:
+            target_dates = trade_dates
+        elif days_back is not None and days_back > 1:
+            today = datetime.now(UTC).date()
+            target_dates = [
+                (today - timedelta(days=i)).isoformat()
+                for i in range(1, days_back + 1)
+                if (today - timedelta(days=i)).weekday() < 5
+            ]
+        else:
+            target_dates = [(datetime.now(UTC).date() - timedelta(days=1)).isoformat()]
 
         for sym in symbols:
             records = []
@@ -506,7 +517,12 @@ class AlphaVantageWorker(BaseWorker):
                     upserted += u
 
                 if selected_dataset in ("options", "all"):
-                    h, u = await self.download_historical_options(db, target_symbols, use_mock=use_mock)
+                    h, u = await self.download_historical_options(
+                        db,
+                        target_symbols,
+                        days_back=kwargs.get("days_back"),
+                        use_mock=use_mock,
+                    )
                     harvested += h
                     upserted += u
 
