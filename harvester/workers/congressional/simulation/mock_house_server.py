@@ -4,9 +4,6 @@ import io
 import xml.etree.ElementTree as ET
 import zipfile
 
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
-
 
 class MockHouseServer:
     """Provides synthetic House ZIP indexes and digital PTR PDFs for offline testing."""
@@ -90,6 +87,15 @@ class MockHouseServer:
                     "owner": "",
                 },
             ]
+
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.pdfgen import canvas
+        except ImportError as exc:
+            raise ImportError(
+                "reportlab is required for synthetic PDF generation in simulation mode. "
+                "Install it via `pip install reportlab` or `uv sync --extra dev`."
+            ) from exc
 
         buf = io.BytesIO()
         c = canvas.Canvas(buf, pagesize=letter)
