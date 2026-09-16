@@ -1,6 +1,10 @@
 """Asynchronous database manager supporting PostgreSQL and SQLite with idempotent migrations."""
 
+import csv
+import gzip
 import logging
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -845,6 +849,9 @@ class DatabaseManager:
             async with self._sqlite_conn.execute("SELECT COUNT(*) FROM macro_indicators") as c10:
                 r10 = await c10.fetchone()
                 macro_indicators = r10[0] if r10 is not None else 0
+            async with self._sqlite_conn.execute("SELECT COUNT(*) FROM options_chains_eod") as c11:
+                r11 = await c11.fetchone()
+                options_chains = r11[0] if r11 is not None else 0
         else:
             assert self._pg_pool is not None
             async with self._pg_pool.acquire() as conn:
@@ -864,6 +871,7 @@ class DatabaseManager:
                 finra_otc = await conn.fetchval("SELECT COUNT(*) FROM finra_otc_volume")
                 cboe_options = await conn.fetchval("SELECT COUNT(*) FROM cboe_daily_options")
                 macro_indicators = await conn.fetchval("SELECT COUNT(*) FROM macro_indicators")
+                options_chains = await conn.fetchval("SELECT COUNT(*) FROM options_chains_eod")
 
         return {
             "total_filings": total_filings,
@@ -876,6 +884,7 @@ class DatabaseManager:
             "finra_otc": finra_otc,
             "cboe_options": cboe_options,
             "macro_indicators": macro_indicators,
+            "options_chains": options_chains,
         }
 
     async def upsert_insider_trades(self, records: list[dict[str, Any]]) -> int:
@@ -1795,4 +1804,133 @@ class DatabaseManager:
                     )
                     count += 1
         return count
+
+    async def get_stock_close(self, symbol: str, trade_date: str) -> float | None:
+        """Retrieve closing stock price for a symbol on a specific trade date."""
+        sym = symbol.upper()
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            async with self._sqlite_conn.execute(
+                "SELECT close FROM stock_bars_daily WHERE symbol = ? AND trade_date = ?",
+                (sym, str(trade_date)),
+            ) as cur:
+                row = await cur.fetchone()
+                return float(row[0]) if row and row[0] is not None else None
+        else:
+            assert self._pg_pool is not None
+            async with self._pg_pool.acquire() as conn:
+                val = await conn.fetchval(
+                    "SELECT close FROM stock_bars_daily WHERE symbol = $1 AND trade_date = $2::date",
+                    sym,
+                    str(trade_date),
+                )
+                return float(val) if val is not None else None
+
+    async def prune_options_chains_older_than(
+        self,
+        days_to_keep: int,
+        symbol: str | None = None,
+    ) -> int:
+        """Prune options chains older than a cutoff date (today - days_to_keep)."""
+        cutoff = (datetime.now(UTC).date() - timedelta(days=days_to_keep)).isoformat()
+        deleted = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            if symbol:
+                cur = await self._sqlite_conn.execute(
+                    "DELETE FROM options_chains_eod WHERE symbol = ? AND trade_date < ?",
+                    (symbol.upper(), cutoff),
+                )
+            else:
+                cur = await self._sqlite_conn.execute(
+                    "DELETE FROM options_chains_eod WHERE trade_date < ?",
+                    (cutoff,),
+                )
+            deleted = cur.rowcount
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            async with self._pg_pool.acquire() as conn:
+                if symbol:
+                    res = await conn.execute(
+                        "DELETE FROM options_chains_eod WHERE symbol = $1 AND trade_date < $2::date",
+                        symbol.upper(),
+                        cutoff,
+                    )
+                else:
+                    res = await conn.execute(
+                        "DELETE FROM options_chains_eod WHERE trade_date < $1::date",
+                        cutoff,
+                    )
+                try:
+                    deleted = int(res.split()[-1])
+                except (IndexError, ValueError):
+                    deleted = 0
+        return deleted
+
+    async def export_options_chains_gzip(
+        self,
+        output_path: str,
+        symbol: str | None = None,
+        before_date: str | None = None,
+    ) -> int:
+        """Export options chains to a compressed CSV.GZ archive."""
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        columns = [
+            "contract_id", "symbol", "trade_date", "expiration", "strike",
+            "option_type", "last_price", "mark_price", "bid", "ask",
+            "volume", "open_interest", "implied_volatility", "delta",
+            "gamma", "theta", "vega", "rho", "created_at",
+        ]
+        exported = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = f"SELECT {', '.join(columns)} FROM options_chains_eod"
+            params: list[Any] = []
+            conditions: list[str] = []
+            if symbol:
+                conditions.append("symbol = ?")
+                params.append(symbol.upper())
+            if before_date:
+                conditions.append("trade_date < ?")
+                params.append(str(before_date))
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY trade_date, symbol, strike"
+
+            with gzip.open(output_path, "wt", encoding="utf-8", newline="") as gz_file:
+                writer = csv.writer(gz_file)
+                writer.writerow(columns)
+                async with self._sqlite_conn.execute(query, params) as cur:
+                    async for row in cur:
+                        writer.writerow(row)
+                        exported += 1
+        else:
+            assert self._pg_pool is not None
+            query = f"SELECT {', '.join(columns)} FROM options_chains_eod"
+            conditions = []
+            pg_params = []
+            idx = 1
+            if symbol:
+                conditions.append(f"symbol = ${idx}")
+                pg_params.append(symbol.upper())
+                idx += 1
+            if before_date:
+                conditions.append(f"trade_date < ${idx}::date")
+                pg_params.append(str(before_date))
+                idx += 1
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY trade_date, symbol, strike"
+
+            with gzip.open(output_path, "wt", encoding="utf-8", newline="") as gz_file:
+                writer = csv.writer(gz_file)
+                writer.writerow(columns)
+                async with self._pg_pool.acquire() as conn, conn.transaction():
+                    async for record in conn.cursor(query, *pg_params):
+                        writer.writerow([record[c] for c in columns])
+                        exported += 1
+
+        return exported
+
 

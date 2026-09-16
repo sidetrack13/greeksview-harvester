@@ -65,6 +65,8 @@ def run_command(
     all_years: Annotated[bool, typer.Option("--all-years/--single-year", help="Sweep all historical years back to 2012 (default: True)")] = True,
     days_back: Annotated[int | None, typer.Option("--days-back", help="Historical trading days back for CBOE or Alpha Vantage Options (default: 1 snapshot, or specify N days)")] = None,
     weeks_back: Annotated[int | None, typer.Option("--weeks-back", help="Historical weeks back for FINRA OTC (default: 52 for full year)")] = None,
+    moneyness_band: Annotated[float | None, typer.Option("--moneyness-band", help="Strike moneyness filter percentage around spot (e.g. 40 for +/-40% strike band)")] = None,
+    prune_inactive: Annotated[bool, typer.Option("--prune-inactive/--no-prune-inactive", help="Prune zero-volume and zero-open-interest options contracts (default: False)")] = False,
     dataset: Annotated[str | None, typer.Option("--dataset", "-d", help="Dataset for Alpha Vantage (daily, intraday, options, fundamentals, actions, reference, all)")] = None,
     symbols: Annotated[str | None, typer.Option("--symbols", "-s", help="Comma-separated ticker symbols (e.g. SPY,QQQ,AAPL)")] = None,
     api_key: Annotated[str | None, typer.Option("--api-key", "-k", help="API key override (e.g. for Alpha Vantage)")] = None,
@@ -108,6 +110,10 @@ def run_command(
                 kwargs["days_back"] = days_back
             if weeks_back is not None:
                 kwargs["weeks_back"] = weeks_back
+            if moneyness_band is not None:
+                kwargs["moneyness_band_pct"] = moneyness_band
+            if prune_inactive:
+                kwargs["prune_inactive"] = True
             if dataset is not None:
                 kwargs["dataset"] = dataset
             if symbols is not None:
@@ -509,12 +515,53 @@ def stats(
                 table.add_row("CBOE Daily Options Records", str(data["cboe_options"]))
             if data.get("macro_indicators"):
                 table.add_row("FRED Macro Indicators", str(data["macro_indicators"]))
+            if data.get("options_chains"):
+                table.add_row("Options Chains EOD Records", str(data["options_chains"]))
 
             console.print(table)
         finally:
             await db.close()
 
     asyncio.run(_execute())
+
+
+@app.command(name="archive-options")
+def archive_options_command(
+    days_to_keep: Annotated[int, typer.Option("--days-to-keep", "-k", help="Days of options data to keep in live database")] = 90,
+    output_dir: Annotated[str, typer.Option("--output-dir", "-o", help="Directory to store compressed .csv.gz archives")] = "./archives",
+    prune: Annotated[bool, typer.Option("--prune/--no-prune", help="Prune archived records from live database after export (default: True)")] = True,
+    symbol: Annotated[str | None, typer.Option("--symbol", "-s", help="Filter by ticker symbol (e.g. SPY)")] = None,
+    db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
+) -> None:
+    """Archive older options chains into compressed .csv.gz and prune live database."""
+    from datetime import UTC, datetime, timedelta
+    from pathlib import Path
+
+    settings = get_settings()
+    if db_url is not None:
+        settings.database_url = db_url
+
+    async def _archive() -> None:
+        cutoff = (datetime.now(UTC).date() - timedelta(days=days_to_keep)).isoformat()
+        out_path = Path(output_dir) / f"options_eod_{symbol or 'all'}_before_{cutoff}.csv.gz"
+        console.print(f"[bold cyan]Archiving options chains older than {cutoff} to {out_path}...[/bold cyan]")
+
+        async with DatabaseManager(settings=settings) as db:
+            exported = await db.export_options_chains_gzip(str(out_path), symbol=symbol, before_date=cutoff)
+            pruned = 0
+            if prune and exported > 0:
+                pruned = await db.prune_options_chains_older_than(days_to_keep=days_to_keep, symbol=symbol)
+
+            table = Table(title="Options Archival & Pruning Summary")
+            table.add_column("Field", style="cyan")
+            table.add_column("Value", style="bold white")
+            table.add_row("Cutoff Date", cutoff)
+            table.add_row("Archive File", str(out_path))
+            table.add_row("Records Exported", str(exported))
+            table.add_row("Records Pruned from Live DB", str(pruned))
+            console.print(table)
+
+    asyncio.run(_archive())
 
 
 if __name__ == "__main__":
