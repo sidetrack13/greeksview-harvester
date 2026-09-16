@@ -67,12 +67,15 @@ def run_command(
     weeks_back: Annotated[int | None, typer.Option("--weeks-back", help="Historical weeks back for FINRA OTC (default: 52 for full year)")] = None,
     dataset: Annotated[str | None, typer.Option("--dataset", "-d", help="Dataset for Alpha Vantage (daily, intraday, options, fundamentals, actions, reference, all)")] = None,
     symbols: Annotated[str | None, typer.Option("--symbols", "-s", help="Comma-separated ticker symbols (e.g. SPY,QQQ,AAPL)")] = None,
+    api_key: Annotated[str | None, typer.Option("--api-key", "-k", help="API key override (e.g. for Alpha Vantage)")] = None,
     db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
 ) -> None:
     """Execute a single background worker independently."""
     settings = get_settings()
     if db_url is not None:
         settings.database_url = db_url
+    if api_key is not None:
+        settings.alphavantage_api_key = api_key
 
     try:
         worker = get_worker(worker_name, config=settings)
