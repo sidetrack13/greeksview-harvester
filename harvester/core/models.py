@@ -203,3 +203,109 @@ class CrawlReport(BaseModel):
     errors_count: int = 0
     duration_seconds: float = 0.0
     error_details: list[str] = Field(default_factory=list)
+
+
+# Alpha Vantage Data Models
+class StockBarDaily(BaseModel):
+    """Daily adjusted stock bar model matching stock_bars_daily table."""
+
+    symbol: str
+    trade_date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    adjusted_close: float
+    volume: int
+    dividend_amount: float = 0.0
+    split_coefficient: float = 1.0
+
+
+class StockBarIntraday(BaseModel):
+    """Intraday stock bar model matching stock_bars_intraday table."""
+
+    symbol: str
+    bar_timestamp: str
+    interval: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+class OptionChainEOD(BaseModel):
+    """End-of-day options contract record matching options_chains_eod table."""
+
+    contract_id: str
+    symbol: str
+    trade_date: str
+    expiration: str
+    strike: float
+    option_type: str
+    last_price: float | None = None
+    mark_price: float | None = None
+    bid: float | None = None
+    ask: float | None = None
+    volume: int = 0
+    open_interest: int = 0
+    implied_volatility: float | None = None
+    delta: float | None = None
+    gamma: float | None = None
+    theta: float | None = None
+    vega: float | None = None
+    rho: float | None = None
+
+
+class CompanyFundamental(BaseModel):
+    """Corporate fundamental report record matching company_fundamentals table."""
+
+    symbol: str
+    fiscal_date_ending: str
+    report_type: str
+    period_type: str = "annual"
+    data_json: str
+
+
+class CorporateDividend(BaseModel):
+    """Corporate dividend distribution record matching corporate_dividends table."""
+
+    symbol: str
+    ex_dividend_date: str
+    declaration_date: str | None = None
+    record_date: str | None = None
+    payment_date: str | None = None
+    amount: float
+
+
+class CorporateSplit(BaseModel):
+    """Corporate stock split record matching corporate_splits table."""
+
+    symbol: str
+    effective_date: str
+    split_factor: float
+
+
+class ETFProfile(BaseModel):
+    """ETF overview and constituent weightings matching etf_profiles table."""
+
+    symbol: str
+    net_assets: float | None = None
+    portfolio_turnover: float | None = None
+    dividend_yield: float | None = None
+    expense_ratio: float | None = None
+    holdings_json: str = "[]"
+    sectors_json: str = "[]"
+
+
+class ListingStatusRecord(BaseModel):
+    """Exchange listing status record matching listing_status table."""
+
+    symbol: str
+    name: str | None = None
+    exchange: str | None = None
+    asset_type: str | None = None
+    ipo_date: str | None = None
+    delisting_date: str | None = None
+    status: str = "Active"
+
