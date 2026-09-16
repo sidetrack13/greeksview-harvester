@@ -1,7 +1,9 @@
-"""Unit tests for offline MockHouseServer data generation."""
-
+import builtins
 import zipfile
 from io import BytesIO
+from unittest.mock import patch
+
+import pytest
 
 from harvester.workers.congressional.simulation.mock_house_server import MockHouseServer
 
@@ -34,3 +36,16 @@ def test_generate_mock_ptr_pdf_custom_transactions() -> None:
     pdf_bytes = MockHouseServer.generate_mock_ptr_pdf(member_name="Custom Member", transactions=custom_txs)
     assert pdf_bytes.startswith(b"%PDF")
     assert len(pdf_bytes) > 500
+
+
+def test_generate_mock_ptr_pdf_missing_reportlab() -> None:
+    orig_import = builtins.__import__
+
+    def mock_import(name: str, *args: object, **kwargs: object) -> object:
+        if name.startswith("reportlab"):
+            raise ImportError("No module named 'reportlab'")
+        return orig_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=mock_import), pytest.raises(ImportError, match="reportlab is required"):
+        MockHouseServer.generate_mock_ptr_pdf()
+

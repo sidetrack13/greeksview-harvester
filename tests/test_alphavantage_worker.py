@@ -3,25 +3,14 @@ Tests for Alpha Vantage Pacer, Client, Worker, and DB Persistence
 =================================================================
 """
 
-import asyncio
-import json
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from typer.testing import CliRunner
 
 from harvester.cli import app
 from harvester.config import Settings
 from harvester.core.db import DatabaseManager
-from harvester.core.sync import (
-    _sync_stock_bars_daily,
-    _sync_stock_bars_intraday,
-    _sync_options_chains_eod,
-    _sync_company_fundamentals,
-    _sync_corporate_dividends,
-    _sync_corporate_splits,
-    _sync_etf_profiles,
-    _sync_listing_status,
-)
 from harvester.workers.alphavantage.api_client import (
     AlphaVantageClient,
     AlphaVantageError,
@@ -31,10 +20,8 @@ from harvester.workers.alphavantage.api_client import (
 from harvester.workers.alphavantage.pacer import (
     AlphaVantagePacer,
     is_burst_notice,
-    DEFAULT_MAX_PER_SECOND,
 )
 from harvester.workers.alphavantage.worker import AlphaVantageWorker
-
 
 # ---------------------------------------------------------------------------
 # 1. Pacer Unit Tests

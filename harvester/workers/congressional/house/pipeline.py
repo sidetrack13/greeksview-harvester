@@ -1,8 +1,11 @@
 """End-to-end House of Representatives disclosure ingestion and persistence pipeline."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from harvester.config import Settings, get_settings
 from harvester.core.db import DatabaseManager
@@ -15,7 +18,9 @@ from harvester.core.models import (
 )
 from harvester.workers.congressional.house.bulk_crawler import HouseBulkCrawler
 from harvester.workers.congressional.house.pdf_parser import HousePTRParser
-from harvester.workers.congressional.simulation.mock_house_server import MockHouseServer
+
+if TYPE_CHECKING:
+    from harvester.workers.congressional.simulation.mock_house_server import MockHouseServer
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +68,8 @@ class HousePipeline:
 
         # 1. Fetch and parse index
         if use_mock or self.settings.simulation_mode:
+            from harvester.workers.congressional.simulation.mock_house_server import MockHouseServer
+
             mock_zip = MockHouseServer.generate_mock_zip(target_year)
             all_records = self.bulk_crawler.parse_xml_index(mock_zip, target_year)
             ptrs = [r for r in all_records if r.is_ptr]
@@ -105,6 +112,8 @@ class HousePipeline:
                 pdf_url = self.build_pdf_url(rec.year, rec.doc_id)
                 try:
                     if use_mock or self.settings.simulation_mode:
+                        from harvester.workers.congressional.simulation.mock_house_server import MockHouseServer
+
                         pdf_bytes = MockHouseServer.generate_mock_ptr_pdf(rec.member_name)
                     else:
                         resp = await self.http_client.get(pdf_url, use_cache=True)
