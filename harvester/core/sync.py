@@ -3,7 +3,7 @@
 import logging
 import sqlite3
 import time
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -47,9 +47,13 @@ async def sync_sqlite_to_postgres(
     batch_size: int = 1000,
     settings: Settings | None = None,
     target_tables: list[str] | None = None,
+    days_back: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Synchronize all or selected harvested tables from local SQLite to PostgreSQL.
     
+    If days_back is provided (e.g. 90), time-series tables (options_chains_eod,
+    stock_bars_daily, cboe_daily_options) only sync records with trade_date >= (today - days_back).
+
     Returns a summary mapping table names to dicts with {sqlite_count, synced_count, duration_seconds}.
     """
     db_file = Path(sqlite_path)
@@ -72,6 +76,12 @@ async def sync_sqlite_to_postgres(
     summary: dict[str, dict[str, Any]] = {}
     sqlite_conn = sqlite3.connect(sqlite_path)
     sqlite_conn.row_factory = sqlite3.Row
+
+    cutoff_date = (
+        (datetime.now(UTC).date() - timedelta(days=days_back)).isoformat()
+        if days_back and days_back > 0
+        else None
+    )
 
     # Dependency order: filings must precede transactions for foreign key constraint
     all_sync_tables = [
@@ -105,7 +115,13 @@ async def sync_sqlite_to_postgres(
                 logger.info("Table %s does not exist in SQLite; skipping", tbl)
                 continue
 
-            row_count = cur.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
+            if cutoff_date and tbl in ("options_chains_eod", "stock_bars_daily", "cboe_daily_options"):
+                row_count = cur.execute(
+                    f"SELECT COUNT(*) FROM {tbl} WHERE trade_date >= ?", (cutoff_date,)
+                ).fetchone()[0]
+            else:
+                row_count = cur.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
+
             if row_count == 0:
                 summary[tbl] = {"sqlite_count": 0, "synced_count": 0, "duration_seconds": 0.0}
                 continue
@@ -120,7 +136,9 @@ async def sync_sqlite_to_postgres(
             elif tbl == "macro_indicators":
                 synced = await _sync_macro_indicators(sqlite_conn, pg_manager._pg_pool, batch_size)
             elif tbl == "cboe_daily_options":
-                synced = await _sync_cboe_daily_options(sqlite_conn, pg_manager._pg_pool, batch_size)
+                synced = await _sync_cboe_daily_options(
+                    sqlite_conn, pg_manager._pg_pool, batch_size, cutoff_date=cutoff_date
+                )
             elif tbl == "finra_otc_volume":
                 synced = await _sync_finra_otc_volume(sqlite_conn, pg_manager._pg_pool, batch_size)
             elif tbl == "insider_trades":
@@ -128,11 +146,15 @@ async def sync_sqlite_to_postgres(
             elif tbl == "institutional_holdings":
                 synced = await _sync_institutional_holdings(sqlite_conn, pg_manager._pg_pool, batch_size)
             elif tbl == "stock_bars_daily":
-                synced = await _sync_stock_bars_daily(sqlite_conn, pg_manager._pg_pool, batch_size)
+                synced = await _sync_stock_bars_daily(
+                    sqlite_conn, pg_manager._pg_pool, batch_size, cutoff_date=cutoff_date
+                )
             elif tbl == "stock_bars_intraday":
                 synced = await _sync_stock_bars_intraday(sqlite_conn, pg_manager._pg_pool, batch_size)
             elif tbl == "options_chains_eod":
-                synced = await _sync_options_chains_eod(sqlite_conn, pg_manager._pg_pool, batch_size)
+                synced = await _sync_options_chains_eod(
+                    sqlite_conn, pg_manager._pg_pool, batch_size, cutoff_date=cutoff_date
+                )
             elif tbl == "company_fundamentals":
                 synced = await _sync_company_fundamentals(sqlite_conn, pg_manager._pg_pool, batch_size)
             elif tbl == "corporate_dividends":
@@ -293,7 +315,12 @@ async def _sync_macro_indicators(sqlite_conn: sqlite3.Connection, pg_pool: Any, 
     return total
 
 
-async def _sync_cboe_daily_options(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
+async def _sync_cboe_daily_options(
+    sqlite_conn: sqlite3.Connection,
+    pg_pool: Any,
+    batch_size: int,
+    cutoff_date: str | None = None,
+) -> int:
     query = """
     INSERT INTO cboe_daily_options (
         id, trade_date, total_call_volume, total_put_volume, total_volume,
@@ -309,7 +336,12 @@ async def _sync_cboe_daily_options(sqlite_conn: sqlite3.Connection, pg_pool: Any
         vix_volume = EXCLUDED.vix_volume
     """
     cur = sqlite_conn.cursor()
-    cur.execute("SELECT id, trade_date, total_call_volume, total_put_volume, total_volume, equity_pc_ratio, index_pc_ratio, total_pc_ratio, vix_volume FROM cboe_daily_options")
+    sql = "SELECT id, trade_date, total_call_volume, total_put_volume, total_volume, equity_pc_ratio, index_pc_ratio, total_pc_ratio, vix_volume FROM cboe_daily_options"
+    params: list[Any] = []
+    if cutoff_date:
+        sql += " WHERE trade_date >= ?"
+        params.append(cutoff_date)
+    cur.execute(sql, params)
     total = 0
     async with pg_pool.acquire() as conn:
         while True:
@@ -476,7 +508,12 @@ async def _sync_institutional_holdings(sqlite_conn: sqlite3.Connection, pg_pool:
     return total
 
 
-async def _sync_stock_bars_daily(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
+async def _sync_stock_bars_daily(
+    sqlite_conn: sqlite3.Connection,
+    pg_pool: Any,
+    batch_size: int,
+    cutoff_date: str | None = None,
+) -> int:
     query = """
     INSERT INTO stock_bars_daily (
         symbol, trade_date, open, high, low, close, adjusted_close, volume,
@@ -494,7 +531,12 @@ async def _sync_stock_bars_daily(sqlite_conn: sqlite3.Connection, pg_pool: Any, 
         updated_at = NOW()
     """
     cur = sqlite_conn.cursor()
-    cur.execute("SELECT symbol, trade_date, open, high, low, close, adjusted_close, volume, dividend_amount, split_coefficient FROM stock_bars_daily")
+    sql = "SELECT symbol, trade_date, open, high, low, close, adjusted_close, volume, dividend_amount, split_coefficient FROM stock_bars_daily"
+    params: list[Any] = []
+    if cutoff_date:
+        sql += " WHERE trade_date >= ?"
+        params.append(cutoff_date)
+    cur.execute(sql, params)
     total = 0
     async with pg_pool.acquire() as conn:
         while True:
@@ -562,7 +604,12 @@ async def _sync_stock_bars_intraday(sqlite_conn: sqlite3.Connection, pg_pool: An
     return total
 
 
-async def _sync_options_chains_eod(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
+async def _sync_options_chains_eod(
+    sqlite_conn: sqlite3.Connection,
+    pg_pool: Any,
+    batch_size: int,
+    cutoff_date: str | None = None,
+) -> int:
     query = """
     INSERT INTO options_chains_eod (
         contract_id, symbol, trade_date, expiration, strike, option_type,
@@ -587,12 +634,17 @@ async def _sync_options_chains_eod(sqlite_conn: sqlite3.Connection, pg_pool: Any
         rho = EXCLUDED.rho
     """
     cur = sqlite_conn.cursor()
-    cur.execute("""
+    sql = """
     SELECT contract_id, symbol, trade_date, expiration, strike, option_type,
            last_price, mark_price, bid, ask, volume, open_interest,
            implied_volatility, delta, gamma, theta, vega, rho
     FROM options_chains_eod
-    """)
+    """
+    params: list[Any] = []
+    if cutoff_date:
+        sql += " WHERE trade_date >= ?"
+        params.append(cutoff_date)
+    cur.execute(sql, params)
     total = 0
     async with pg_pool.acquire() as conn:
         while True:
