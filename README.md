@@ -10,6 +10,8 @@ While real-time option chain Greeks and order routing connect directly to user b
 
 `greeksview-harvester` consolidates all background harvesting workers into a single high-performance, modular Python repository where each worker operates independently with its own schedule, rate limits, schema, and isolated failure domain.
 
+> 📖 **Operational Runbook**: For a full guide on running workers on-demand, cron configurations, daemon operations, and troubleshooting, see the [Operational Runbook](docs/RUNBOOK.md).
+
 ---
 
 ## 💻 Quick Start & Local Execution
