@@ -200,6 +200,8 @@ class AlphaVantageWorker(BaseWorker):
         symbols: list[str],
         trade_dates: list[str] | None = None,
         days_back: int | None = None,
+        moneyness_band_pct: float | None = None,
+        prune_inactive: bool = False,
         use_mock: bool = False,
     ) -> tuple[int, int]:
         """Download end-of-day options chains and persist to options_chains_eod."""
@@ -221,8 +223,19 @@ class AlphaVantageWorker(BaseWorker):
             records = []
             if use_mock:
                 for dt in target_dates:
-                    for strike in (450.0, 455.0, 460.0):
+                    mock_spot = 455.0
+                    for strike in (300.0, 450.0, 455.0, 460.0, 600.0):
+                        if (
+                            moneyness_band_pct is not None
+                            and moneyness_band_pct > 0
+                            and abs(strike - mock_spot) / mock_spot > (moneyness_band_pct / 100.0)
+                        ):
+                            continue
                         for otype in ("call", "put"):
+                            vol = 0 if strike == 600.0 else (10 if strike == 300.0 else 1200)
+                            oi = 0 if strike == 600.0 else (50 if strike == 300.0 else 4500)
+                            if prune_inactive and vol == 0 and oi == 0:
+                                continue
                             cid = f"{sym}_{dt}_{strike:.0f}_{otype.upper()}"
                             records.append({
                                 "contract_id": cid,
@@ -235,8 +248,8 @@ class AlphaVantageWorker(BaseWorker):
                                 "mark_price": 5.20,
                                 "bid": 5.15,
                                 "ask": 5.25,
-                                "volume": 1200,
-                                "open_interest": 4500,
+                                "volume": vol,
+                                "open_interest": oi,
                                 "implied_volatility": 0.185,
                                 "delta": 0.52 if otype == "call" else -0.48,
                                 "gamma": 0.035,
@@ -249,21 +262,45 @@ class AlphaVantageWorker(BaseWorker):
                     try:
                         data = await self.client.fetch_json("HISTORICAL_OPTIONS", {"symbol": sym, "date": dt})
                         chain = data.get("data", [])
+                        spot: float | None = None
+                        if moneyness_band_pct is not None and moneyness_band_pct > 0:
+                            spot = await db.get_stock_close(sym, dt)
+                            if spot is None and chain:
+                                strikes_list = [float(r.get("strike", 0)) for r in chain if float(r.get("strike", 0)) > 0]
+                                if strikes_list:
+                                    strikes_list.sort()
+                                    spot = strikes_list[len(strikes_list) // 2]
+
                         for row in chain:
+                            vol = int(row.get("volume") or 0)
+                            oi = int(row.get("open_interest") or 0)
+                            if prune_inactive and vol == 0 and oi == 0:
+                                continue
+
+                            strike = float(row.get("strike", 0))
+                            if (
+                                moneyness_band_pct is not None
+                                and moneyness_band_pct > 0
+                                and spot is not None
+                                and spot > 0
+                                and abs(strike - spot) / spot > (moneyness_band_pct / 100.0)
+                            ):
+                                continue
+
                             cid = row.get("contractID") or f"{sym}_{dt}_{row.get('strike')}_{row.get('type')}"
                             records.append({
                                 "contract_id": cid,
                                 "symbol": sym,
                                 "trade_date": dt,
                                 "expiration": row.get("expiration"),
-                                "strike": float(row.get("strike", 0)),
+                                "strike": strike,
                                 "option_type": str(row.get("type", "call")).lower(),
                                 "last_price": float(row["last"]) if row.get("last") is not None else None,
                                 "mark_price": float(row["mark"]) if row.get("mark") is not None else None,
                                 "bid": float(row["bid"]) if row.get("bid") is not None else None,
                                 "ask": float(row["ask"]) if row.get("ask") is not None else None,
-                                "volume": int(row.get("volume") or 0),
-                                "open_interest": int(row.get("open_interest") or 0),
+                                "volume": vol,
+                                "open_interest": oi,
                                 "implied_volatility": float(row["implied_volatility"]) if row.get("implied_volatility") is not None else None,
                                 "delta": float(row["delta"]) if row.get("delta") is not None else None,
                                 "gamma": float(row["gamma"]) if row.get("gamma") is not None else None,
@@ -521,6 +558,8 @@ class AlphaVantageWorker(BaseWorker):
                         db,
                         target_symbols,
                         days_back=kwargs.get("days_back"),
+                        moneyness_band_pct=kwargs.get("moneyness_band_pct"),
+                        prune_inactive=bool(kwargs.get("prune_inactive", False)),
                         use_mock=use_mock,
                     )
                     harvested += h

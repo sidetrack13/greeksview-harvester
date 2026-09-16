@@ -368,6 +368,12 @@ async def test_worker_real_flow_with_json_mocks(tmp_path):
         h_o, u_o = await worker.download_historical_options(db, ["SPY"], use_mock=False)
         assert h_o == 1 and u_o == 1
 
+        # Test options real fetch with moneyness filtering and pruning
+        h_o2, u_o2 = await worker.download_historical_options(
+            db, ["SPY"], moneyness_band_pct=50.0, prune_inactive=True, use_mock=False
+        )
+        assert h_o2 == 1 and u_o2 == 1
+
         h_f, u_f = await worker.download_fundamentals(db, ["AAPL"], use_mock=False)
         assert h_f >= 1 and u_f >= 1
 
@@ -456,7 +462,7 @@ async def test_download_historical_options_days_back(tmp_path):
             row = await cur.fetchone()
             num_dates, total_rows = row[0], row[1]
             assert num_dates >= 3
-            assert total_rows == num_dates * 6
+            assert total_rows == num_dates * 10
 
 
 def test_cli_run_alphavantage_days_back(tmp_path) -> None:
@@ -467,5 +473,127 @@ def test_cli_run_alphavantage_days_back(tmp_path) -> None:
     )
     assert result.exit_code == 0
     assert "SUCCESS" in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_download_historical_options_moneyness_filter(tmp_path):
+    db_file = str(tmp_path / "moneyness.db")
+    settings = Settings(database_url=f"sqlite:///{db_file}")
+    worker = AlphaVantageWorker(settings=settings)
+
+    async with DatabaseManager(settings) as db:
+        await db.initialize_tables()
+        # 10% band around 455 keeps 450, 455, 460 (3 strikes * 2 types = 6 contracts per date)
+        h, u = await worker.download_historical_options(
+            db, ["SPY"], days_back=3, moneyness_band_pct=10.0, use_mock=True
+        )
+        assert h > 0
+        assert u == h
+
+        async with db._sqlite_conn.execute("SELECT COUNT(DISTINCT trade_date), COUNT(*) FROM options_chains_eod") as cur:
+            row = await cur.fetchone()
+            num_dates, total_rows = row[0], row[1]
+            assert total_rows == num_dates * 6
+
+
+@pytest.mark.asyncio
+async def test_download_historical_options_prune_inactive(tmp_path):
+    db_file = str(tmp_path / "prune_inactive.db")
+    settings = Settings(database_url=f"sqlite:///{db_file}")
+    worker = AlphaVantageWorker(settings=settings)
+
+    async with DatabaseManager(settings) as db:
+        await db.initialize_tables()
+        # prune_inactive removes strike 600.0 (vol=0, oi=0), keeping 4 strikes * 2 types = 8 per date
+        h, u = await worker.download_historical_options(
+            db, ["SPY"], days_back=3, prune_inactive=True, use_mock=True
+        )
+        assert h > 0
+        assert u == h
+
+        async with db._sqlite_conn.execute("SELECT COUNT(DISTINCT trade_date), COUNT(*) FROM options_chains_eod") as cur:
+            row = await cur.fetchone()
+            num_dates, total_rows = row[0], row[1]
+            assert total_rows == num_dates * 8
+
+
+@pytest.mark.asyncio
+async def test_db_options_archive_and_prune(tmp_path):
+    import gzip
+    db_file = str(tmp_path / "archive_test.db")
+    settings = Settings(database_url=f"sqlite:///{db_file}")
+    worker = AlphaVantageWorker(settings=settings)
+
+    async with DatabaseManager(settings) as db:
+        await db.initialize_tables()
+        # Seed options chains
+        await worker.download_historical_options(db, ["SPY"], days_back=5, use_mock=True)
+
+        archive_file = str(tmp_path / "archive.csv.gz")
+        exported = await db.export_options_chains_gzip(archive_file)
+        assert exported > 0
+
+        # Verify archive file contents
+        with gzip.open(archive_file, "rt", encoding="utf-8") as f:
+            lines = f.readlines()
+            assert len(lines) == exported + 1  # header + records
+            assert "contract_id,symbol,trade_date" in lines[0]
+
+        # Test stock close lookup
+        await db.upsert_stock_bars_daily([{
+            "symbol": "SPY",
+            "trade_date": "2026-09-14",
+            "open": 450.0,
+            "high": 455.0,
+            "low": 448.0,
+            "close": 452.5,
+            "adjusted_close": 452.5,
+            "volume": 50000000,
+        }])
+        close_price = await db.get_stock_close("SPY", "2026-09-14")
+        assert close_price == 452.5
+        assert await db.get_stock_close("NONEXIST", "2026-09-14") is None
+
+        # Test pruning
+        pruned = await db.prune_options_chains_older_than(days_to_keep=0, symbol="SPY")
+        assert pruned == exported
+
+        stats = await db.get_stats()
+        assert stats["options_chains"] == 0
+
+
+def test_cli_archive_options_and_storage_flags(tmp_path):
+    db_file = str(tmp_path / "cli_storage.db")
+    # 1. Ingest with moneyness band and inactive pruning
+    res_run = runner.invoke(
+        app,
+        [
+            "run", "alphavantage", "--mock", "--dataset", "options",
+            "--symbols", "SPY", "--days-back", "3",
+            "--moneyness-band", "15", "--prune-inactive",
+            "--db-url", f"sqlite:///{db_file}",
+        ],
+    )
+    assert res_run.exit_code == 0
+    assert "SUCCESS" in res_run.stdout
+
+    # 2. Check stats
+    res_stats = runner.invoke(app, ["stats", "--db-url", f"sqlite:///{db_file}"])
+    assert res_stats.exit_code == 0
+    assert "Options Chains EOD Records" in res_stats.stdout
+
+    # 3. Archive and prune options
+    archive_dir = str(tmp_path / "archives")
+    res_archive = runner.invoke(
+        app,
+        [
+            "archive-options", "--days-to-keep", "0",
+            "--output-dir", archive_dir, "--prune",
+            "--db-url", f"sqlite:///{db_file}",
+        ],
+    )
+    assert res_archive.exit_code == 0
+    assert "Options Archival & Pruning Summary" in res_archive.stdout
+    assert "Records Exported" in res_archive.stdout
 
 

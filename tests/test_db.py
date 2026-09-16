@@ -157,7 +157,7 @@ async def test_postgres_mode_mocked() -> None:
         assert dup_count == 0
 
         # 4. get_stats
-        mock_conn.fetchval.side_effect = [1, 1, 1, 0, 0, 0, 0, 0]
+        mock_conn.fetchval.side_effect = [1, 1, 1, 0, 0, 0, 0, 0, 0]
         mock_conn.fetch.side_effect = [
             [{"transaction_type": "BUY", "count": 1}],
             [{"chamber": "house", "count": 1}],
@@ -167,6 +167,7 @@ async def test_postgres_mode_mocked() -> None:
         assert stats["total_transactions"] == 1
         assert stats["by_type"]["BUY"] == 1
         assert stats["by_chamber"]["house"] == 1
+        assert stats["options_chains"] == 0
         # 5. Harvester tables in Postgres mode
         mock_conn.execute.return_value = "INSERT 0 1"
         assert await db.upsert_insider_trades([{"id": "it_1", "symbol": "NVDA", "filing_date": "2026-09-10", "reporting_owner": "Jensen", "transaction_type": "Sale"}]) == 1
@@ -192,6 +193,14 @@ async def test_postgres_mode_mocked() -> None:
         assert await db.execute("SELECT 1") == "INSERT 0 1"
         assert await db.fetch("SELECT 1") == [{"col": 1}]
         assert await db.fetchval("SELECT 42") == 42
+
+        # Storage optimization methods in Postgres mode
+        mock_conn.fetchval.return_value = 450.5
+        assert await db.get_stock_close("SPY", "2026-09-14") == 450.5
+
+        mock_conn.execute.return_value = "DELETE 5"
+        assert await db.prune_options_chains_older_than(30, symbol="SPY") == 5
+        assert await db.prune_options_chains_older_than(30) == 5
 
         await db.close()
         assert mock_pool.close.called
