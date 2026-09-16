@@ -440,3 +440,32 @@ def test_cli_run_alphavantage_with_api_key(tmp_path) -> None:
     assert "SUCCESS" in result.stdout
 
 
+@pytest.mark.asyncio
+async def test_download_historical_options_days_back(tmp_path):
+    db_file = str(tmp_path / "days_back.db")
+    settings = Settings(database_url=f"sqlite:///{db_file}")
+    worker = AlphaVantageWorker(settings=settings)
+
+    async with DatabaseManager(settings) as db:
+        await db.initialize_tables()
+        h, u = await worker.download_historical_options(db, ["SPY"], days_back=5, use_mock=True)
+        assert h > 6
+        assert u == h
+
+        async with db._sqlite_conn.execute("SELECT COUNT(DISTINCT trade_date), COUNT(*) FROM options_chains_eod") as cur:
+            row = await cur.fetchone()
+            num_dates, total_rows = row[0], row[1]
+            assert num_dates >= 3
+            assert total_rows == num_dates * 6
+
+
+def test_cli_run_alphavantage_days_back(tmp_path) -> None:
+    db_file = str(tmp_path / "cli_days_back.db")
+    result = runner.invoke(
+        app,
+        ["run", "alphavantage", "--mock", "--dataset", "options", "--symbols", "SPY", "--days-back", "5", "--db-url", f"sqlite:///{db_file}"],
+    )
+    assert result.exit_code == 0
+    assert "SUCCESS" in result.stdout
+
+
