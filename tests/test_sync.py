@@ -1,7 +1,7 @@
 """Unit tests for the SQLite-to-PostgreSQL synchronization module."""
 
 import sqlite3
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -474,5 +474,139 @@ async def test_sync_alphavantage_tables(tmp_path):
         assert summary["corporate_splits"]["synced_count"] == 1
         assert summary["etf_profiles"]["synced_count"] == 1
         assert summary["listing_status"]["synced_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
+    """Test sync_sqlite_to_postgres with --days-back filtering on trade_date tables."""
+    db_path = str(tmp_path / "days_back_test.db")
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+
+    today = datetime.now(UTC).date()
+    recent_date = (today - timedelta(days=2)).isoformat()
+    old_date = (today - timedelta(days=120)).isoformat()
+
+    cur.execute("""
+    CREATE TABLE stock_bars_daily (
+        symbol TEXT, trade_date TEXT, open REAL, high REAL, low REAL, close REAL,
+        adjusted_close REAL, volume INTEGER, dividend_amount REAL, split_coefficient REAL
+    )
+    """)
+    cur.execute("INSERT INTO stock_bars_daily VALUES ('SPY', ?, 450.0, 455.0, 448.0, 452.0, 452.0, 50000000, 0.0, 1.0)", (recent_date,))
+    cur.execute("INSERT INTO stock_bars_daily VALUES ('SPY', ?, 400.0, 405.0, 398.0, 402.0, 402.0, 40000000, 0.0, 1.0)", (old_date,))
+
+    cur.execute("""
+    CREATE TABLE cboe_daily_options (
+        id TEXT PRIMARY KEY, trade_date TEXT, total_call_volume REAL, total_put_volume REAL,
+        total_volume REAL, equity_pc_ratio REAL, index_pc_ratio REAL, total_pc_ratio REAL, vix_volume REAL
+    )
+    """)
+    cur.execute("INSERT INTO cboe_daily_options VALUES ('cboe_recent', ?, 1000, 800, 1800, 0.65, 1.2, 0.8, 500)", (recent_date,))
+    cur.execute("INSERT INTO cboe_daily_options VALUES ('cboe_old', ?, 900, 700, 1600, 0.70, 1.1, 0.85, 450)", (old_date,))
+
+    cur.execute("""
+    CREATE TABLE options_chains_eod (
+        contract_id TEXT, symbol TEXT, trade_date TEXT, expiration TEXT, strike REAL, option_type TEXT,
+        last_price REAL, mark_price REAL, bid REAL, ask REAL, volume INTEGER, open_interest INTEGER,
+        implied_volatility REAL, delta REAL, gamma REAL, theta REAL, vega REAL, rho REAL
+    )
+    """)
+    cur.execute("""
+    INSERT INTO options_chains_eod VALUES (
+        'C_recent', 'SPY', ?, '2026-12-18', 450.0, 'call', 5.0, 5.0, 4.9, 5.1,
+        100, 500, 0.18, 0.5, 0.03, -0.04, 0.12, 0.05
+    )
+    """, (recent_date,))
+    cur.execute("""
+    INSERT INTO options_chains_eod VALUES (
+        'C_old', 'SPY', ?, '2025-12-18', 400.0, 'call', 4.0, 4.0, 3.9, 4.1,
+        50, 200, 0.22, 0.4, 0.02, -0.03, 0.10, 0.04
+    )
+    """, (old_date,))
+
+    conn.commit()
+    conn.close()
+
+    mock_pg_conn = AsyncMock()
+    mock_pg_conn.execute = AsyncMock()
+    mock_pg_conn.executemany = AsyncMock()
+
+    class MockPoolCtx:
+        async def __aenter__(self):
+            return mock_pg_conn
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value = MockPoolCtx()
+    mock_pool.close = AsyncMock()
+
+    with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        mock_create_pool.return_value = mock_pool
+
+        # 1. Test with days_back=30: only recent_date (2 days ago) should be synced
+        summary_filtered = await sync_sqlite_to_postgres(
+            pg_url="postgresql://user:pass@localhost:5432/testdb",
+            sqlite_path=db_path,
+            target_tables=["stock_bars_daily", "cboe_daily_options", "options_chains_eod"],
+            days_back=30,
+        )
+
+        assert summary_filtered["stock_bars_daily"]["sqlite_count"] == 1
+        assert summary_filtered["stock_bars_daily"]["synced_count"] == 1
+        assert summary_filtered["cboe_daily_options"]["sqlite_count"] == 1
+        assert summary_filtered["cboe_daily_options"]["synced_count"] == 1
+        assert summary_filtered["options_chains_eod"]["sqlite_count"] == 1
+        assert summary_filtered["options_chains_eod"]["synced_count"] == 1
+
+        # Check that executed batches contain only recent records
+        exec_calls = mock_pg_conn.executemany.call_args_list
+        options_batch = next(c.args[1] for c in exec_calls if "options_chains_eod" in c.args[0])
+        assert len(options_batch) == 1
+        assert options_batch[0][0] == "C_recent"
+
+        # 2. Test with days_back=None: all records should be synced
+        mock_pg_conn.executemany.reset_mock()
+        summary_all = await sync_sqlite_to_postgres(
+            pg_url="postgresql://user:pass@localhost:5432/testdb",
+            sqlite_path=db_path,
+            target_tables=["stock_bars_daily", "cboe_daily_options", "options_chains_eod"],
+            days_back=None,
+        )
+
+        assert summary_all["stock_bars_daily"]["sqlite_count"] == 2
+        assert summary_all["stock_bars_daily"]["synced_count"] == 2
+        assert summary_all["cboe_daily_options"]["sqlite_count"] == 2
+        assert summary_all["cboe_daily_options"]["synced_count"] == 2
+        assert summary_all["options_chains_eod"]["sqlite_count"] == 2
+        assert summary_all["options_chains_eod"]["synced_count"] == 2
+
+
+def test_cli_sync_pg_days_back(tmp_path):
+    """Test CLI execution with --days-back option."""
+    fake_db = str(tmp_path / "test.db")
+    conn = sqlite3.connect(fake_db)
+    conn.close()
+
+    with patch("harvester.core.sync.sync_sqlite_to_postgres", new_callable=AsyncMock) as mock_sync:
+        mock_sync.return_value = {
+            "options_chains_eod": {"sqlite_count": 50, "synced_count": 50, "duration_seconds": 0.12},
+        }
+
+        res = runner.invoke(app, [
+            "sync-pg",
+            "--pg-url", "postgresql://user:pass@localhost:5432/test",
+            "--sqlite-path", fake_db,
+            "--table", "options_chains_eod",
+            "--days-back", "90",
+        ])
+        assert res.exit_code == 0
+        assert "options_chains_eod" in res.stdout
+        assert "Days Back:" in res.stdout
+        assert "90" in res.stdout
+        mock_sync.assert_called_once()
+        assert mock_sync.call_args.kwargs["days_back"] == 90
+
 
 

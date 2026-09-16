@@ -201,20 +201,27 @@ curl -s http://localhost:8080/health | jq .
 Data accumulated in local SQLite is synchronized incrementally into PostgreSQL:
 
 ```bash
-# Synchronize all tables to production PostgreSQL
+# Synchronize all tables to production PostgreSQL (unrestricted history)
 uv run harvester sync-pg
 
-# Synchronize a specific table only
-uv run harvester sync-pg --table stock_bars_daily
+# Synchronize trailing 90 days of time-series data (options_chains_eod, stock_bars_daily, cboe_daily_options)
+uv run harvester sync-pg --days-back 90
 
-# Dry-run inspection (logs rows to be transferred without writing to target)
-uv run harvester sync-pg --dry-run
+# Synchronize only settled options chains within the last 90 trading days
+uv run harvester sync-pg --table options_chains_eod --days-back 90
 
-# Specify custom source and destination database connection URLs
+# Synchronize a specific table only with custom batch size
+uv run harvester sync-pg --table stock_bars_daily --batch-size 500
+
+# Specify custom source and destination PostgreSQL connection URL
 uv run harvester sync-pg \
-  --source-url sqlite:///greeksview_harvester.db \
-  --dest-url postgresql://postgres:password@prod-db:5432/greeksview
+  --sqlite-path greeksview_harvester.db \
+  --pg-url postgresql://postgres:password@prod-db:5432/greeksview \
+  --days-back 90
 ```
+
+> **Storage Optimization Strategy**: Keep deep historical backfill data (e.g. 800 days) in local SQLite or compressed parquet/gzip archives while selectively synchronizing only recent active windows (e.g. `--days-back 90`) into production PostgreSQL to conserve cloud database storage and keep cluster queries fast.
+
 
 ---
 

@@ -229,6 +229,7 @@ def sync_pg_command(
     sqlite_path: Annotated[str, typer.Option("--sqlite-path", help="Source SQLite database file path")] = "greeksview_harvester.db",
     batch_size: Annotated[int, typer.Option("--batch-size", "-b", help="Batch size for PostgreSQL inserts")] = 1000,
     table: Annotated[list[str] | None, typer.Option("--table", "-t", help="Specific table(s) to sync (default: all)")] = None,
+    days_back: Annotated[int | None, typer.Option("--days-back", "-d", help="Historical trading days back to sync to PostgreSQL (default: all)")] = None,
 ) -> None:
     """Synchronize all locally harvested SQLite tables into PostgreSQL."""
     settings = get_settings()
@@ -247,6 +248,7 @@ def sync_pg_command(
             f"[bold]Source SQLite:[/bold] [cyan]{sqlite_path}[/cyan]\n"
             f"[bold]Target PostgreSQL:[/bold] [green]{target_url.split('@')[-1] if '@' in target_url else 'configured'}[/green]\n"
             f"[bold]Batch Size:[/bold] {batch_size}\n"
+            f"[bold]Days Back:[/bold] {days_back if days_back is not None else 'ALL (unrestricted)'}\n"
             f"[bold]Filter Tables:[/bold] {', '.join(table) if table else 'ALL TABLES'}",
             title="Database Synchronization: SQLite ➔ PostgreSQL",
         )
@@ -261,6 +263,7 @@ def sync_pg_command(
                     batch_size=batch_size,
                     settings=settings,
                     target_tables=table,
+                    days_back=days_back,
                 )
             except Exception as e:
                 console.print(f"[bold red]Sync Failed:[/bold red] {e}")
