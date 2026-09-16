@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = 30.0
     http_max_retries: int = 3
 
+    # Alpha Vantage Settings
+    alphavantage_api_key: str = ""
+    alphavantage_base_url: str = "https://www.alphavantage.co/query"
+    alphavantage_max_per_second: int = 30
+    alphavantage_rpm: int = 1200
+    alphavantage_cooldown_ms: int = 2000
+
     # Simulation & Testing
     simulation_mode: bool = False
     mock_fixtures_dir: Path = Path("tests/fixtures")

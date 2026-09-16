@@ -31,12 +31,12 @@ def mock_settings() -> Settings:
 
 
 def test_worker_registry_coverage() -> None:
-    """Verify all 5 core background workers are registered."""
-    expected = {"congressional", "sec_edgar", "finra_darkpool", "cboe_options", "fred_macro"}
+    """Verify all 6 core background workers are registered."""
+    expected = {"congressional", "sec_edgar", "finra_darkpool", "cboe_options", "fred_macro", "alphavantage"}
     assert set(WORKER_REGISTRY.keys()) == expected
 
     workers = list_workers()
-    assert len(workers) == 5
+    assert len(workers) == 6
     names = {w["name"] for w in workers}
     assert names == expected
 

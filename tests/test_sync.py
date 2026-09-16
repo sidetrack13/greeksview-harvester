@@ -360,3 +360,119 @@ async def test_sync_sqlite_to_postgres_filters_and_invalid_rows(tmp_path):
         assert summary2["cboe_daily_options"]["synced_count"] == 0
         assert summary2["finra_otc_volume"]["synced_count"] == 0
 
+
+@pytest.mark.asyncio
+async def test_sync_alphavantage_tables(tmp_path):
+    """Test sync for all 8 Alpha Vantage persistence tables."""
+    db_path = str(tmp_path / "av_sync_test.db")
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE stock_bars_daily (
+        symbol TEXT, trade_date TEXT, open REAL, high REAL, low REAL, close REAL,
+        adjusted_close REAL, volume INTEGER, dividend_amount REAL, split_coefficient REAL
+    )
+    """)
+    cur.execute("INSERT INTO stock_bars_daily VALUES ('SPY', '2024-06-14', 450.0, 455.0, 448.0, 452.0, 452.0, 50000000, 0.0, 1.0)")
+    cur.execute("INSERT INTO stock_bars_daily VALUES ('SPY', 'bad-date', 450.0, 455.0, 448.0, 452.0, 452.0, 50000000, 0.0, 1.0)")
+
+    cur.execute("""
+    CREATE TABLE stock_bars_intraday (
+        symbol TEXT, bar_timestamp TEXT, interval TEXT, open REAL, high REAL, low REAL, close REAL, volume INTEGER
+    )
+    """)
+    cur.execute("INSERT INTO stock_bars_intraday VALUES ('SPY', '2024-06-14 16:00:00', '5min', 450.0, 451.0, 449.5, 450.5, 15000)")
+
+    cur.execute("""
+    CREATE TABLE options_chains_eod (
+        contract_id TEXT, symbol TEXT, trade_date TEXT, expiration TEXT, strike REAL, option_type TEXT,
+        last_price REAL, mark_price REAL, bid REAL, ask REAL, volume INTEGER, open_interest INTEGER,
+        implied_volatility REAL, delta REAL, gamma REAL, theta REAL, vega REAL, rho REAL
+    )
+    """)
+    cur.execute("INSERT INTO options_chains_eod VALUES ('C1', 'SPY', '2024-06-14', '2024-07-19', 450.0, 'call', 5.0, 5.0, 4.9, 5.1, 100, 500, 0.18, 0.5, 0.03, -0.04, 0.12, 0.05)")
+    cur.execute("INSERT INTO options_chains_eod VALUES ('C2', 'SPY', 'bad-date', 'bad-date', 450.0, 'call', 5.0, 5.0, 4.9, 5.1, 100, 500, 0.18, 0.5, 0.03, -0.04, 0.12, 0.05)")
+
+    cur.execute("""
+    CREATE TABLE company_fundamentals (
+        symbol TEXT, fiscal_date_ending TEXT, report_type TEXT, period_type TEXT, data_json TEXT
+    )
+    """)
+    cur.execute("INSERT INTO company_fundamentals VALUES ('AAPL', '2024-03-31', 'OVERVIEW', 'annual', '{\"Symbol\":\"AAPL\"}')")
+
+    cur.execute("""
+    CREATE TABLE corporate_dividends (
+        symbol TEXT, ex_dividend_date TEXT, declaration_date TEXT, record_date TEXT, payment_date TEXT, amount REAL
+    )
+    """)
+    cur.execute("INSERT INTO corporate_dividends VALUES ('AAPL', '2024-05-10', '2024-05-01', '2024-05-13', '2024-05-16', 0.25)")
+    cur.execute("INSERT INTO corporate_dividends VALUES ('AAPL', 'bad-date', NULL, NULL, NULL, 0.25)")
+
+    cur.execute("""
+    CREATE TABLE corporate_splits (
+        symbol TEXT, effective_date TEXT, split_factor REAL
+    )
+    """)
+    cur.execute("INSERT INTO corporate_splits VALUES ('AAPL', '2020-08-31', 4.0)")
+    cur.execute("INSERT INTO corporate_splits VALUES ('AAPL', 'bad-date', 4.0)")
+
+    cur.execute("""
+    CREATE TABLE etf_profiles (
+        symbol TEXT, net_assets REAL, portfolio_turnover REAL, dividend_yield REAL, expense_ratio REAL, holdings_json TEXT, sectors_json TEXT
+    )
+    """)
+    cur.execute("INSERT INTO etf_profiles VALUES ('SPY', 500000000.0, 0.02, 0.015, 0.0009, '[]', '[]')")
+
+    cur.execute("""
+    CREATE TABLE listing_status (
+        symbol TEXT, name TEXT, exchange TEXT, asset_type TEXT, ipo_date TEXT, delisting_date TEXT, status TEXT
+    )
+    """)
+    cur.execute("INSERT INTO listing_status VALUES ('SPY', 'SPDR S&P 500', 'NYSE', 'ETF', '1993-01-22', NULL, 'Active')")
+
+    conn.commit()
+    conn.close()
+
+    mock_pg_conn = AsyncMock()
+    mock_pg_conn.execute = AsyncMock()
+    mock_pg_conn.executemany = AsyncMock()
+
+    class MockPoolCtx:
+        async def __aenter__(self):
+            return mock_pg_conn
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value = MockPoolCtx()
+    mock_pool.close = AsyncMock()
+
+    with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        mock_create_pool.return_value = mock_pool
+
+        summary = await sync_sqlite_to_postgres(
+            pg_url="postgresql://user:pass@localhost:5432/testdb",
+            sqlite_path=db_path,
+            target_tables=[
+                "stock_bars_daily",
+                "stock_bars_intraday",
+                "options_chains_eod",
+                "company_fundamentals",
+                "corporate_dividends",
+                "corporate_splits",
+                "etf_profiles",
+                "listing_status",
+            ],
+        )
+
+        assert summary["stock_bars_daily"]["synced_count"] == 1
+        assert summary["stock_bars_intraday"]["synced_count"] == 1
+        assert summary["options_chains_eod"]["synced_count"] == 1
+        assert summary["company_fundamentals"]["synced_count"] == 1
+        assert summary["corporate_dividends"]["synced_count"] == 1
+        assert summary["corporate_splits"]["synced_count"] == 1
+        assert summary["etf_profiles"]["synced_count"] == 1
+        assert summary["listing_status"]["synced_count"] == 1
+
+

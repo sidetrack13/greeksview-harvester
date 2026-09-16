@@ -162,6 +162,116 @@ CREATE TABLE IF NOT EXISTS macro_indicators (
 );
 CREATE INDEX IF NOT EXISTS idx_macro_series ON macro_indicators(series_id);
 CREATE INDEX IF NOT EXISTS idx_macro_date ON macro_indicators(date);
+
+-- Alpha Vantage Persistence Tables
+CREATE TABLE IF NOT EXISTS stock_bars_daily (
+    symbol TEXT NOT NULL,
+    trade_date TEXT NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    adjusted_close REAL NOT NULL,
+    volume INTEGER NOT NULL,
+    dividend_amount REAL DEFAULT 0.0,
+    split_coefficient REAL DEFAULT 1.0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (symbol, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_bars_daily_date ON stock_bars_daily(trade_date);
+
+CREATE TABLE IF NOT EXISTS stock_bars_intraday (
+    symbol TEXT NOT NULL,
+    bar_timestamp TEXT NOT NULL,
+    interval TEXT NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    volume INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (symbol, interval, bar_timestamp)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_bars_intraday_ts ON stock_bars_intraday(bar_timestamp);
+
+CREATE TABLE IF NOT EXISTS options_chains_eod (
+    contract_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    trade_date TEXT NOT NULL,
+    expiration TEXT NOT NULL,
+    strike REAL NOT NULL,
+    option_type TEXT NOT NULL CHECK (option_type IN ('call', 'put')),
+    last_price REAL,
+    mark_price REAL,
+    bid REAL,
+    ask REAL,
+    volume INTEGER DEFAULT 0,
+    open_interest INTEGER DEFAULT 0,
+    implied_volatility REAL,
+    delta REAL,
+    gamma REAL,
+    theta REAL,
+    vega REAL,
+    rho REAL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (contract_id, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_options_chains_sym_date ON options_chains_eod(symbol, trade_date);
+CREATE INDEX IF NOT EXISTS idx_options_chains_exp ON options_chains_eod(expiration);
+
+CREATE TABLE IF NOT EXISTS company_fundamentals (
+    symbol TEXT NOT NULL,
+    fiscal_date_ending TEXT NOT NULL,
+    report_type TEXT NOT NULL,
+    period_type TEXT NOT NULL DEFAULT 'annual',
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (symbol, report_type, fiscal_date_ending, period_type)
+);
+CREATE INDEX IF NOT EXISTS idx_fundamentals_sym ON company_fundamentals(symbol);
+
+CREATE TABLE IF NOT EXISTS corporate_dividends (
+    symbol TEXT NOT NULL,
+    ex_dividend_date TEXT NOT NULL,
+    declaration_date TEXT,
+    record_date TEXT,
+    payment_date TEXT,
+    amount REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (symbol, ex_dividend_date)
+);
+
+CREATE TABLE IF NOT EXISTS corporate_splits (
+    symbol TEXT NOT NULL,
+    effective_date TEXT NOT NULL,
+    split_factor REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (symbol, effective_date)
+);
+
+CREATE TABLE IF NOT EXISTS etf_profiles (
+    symbol TEXT PRIMARY KEY,
+    net_assets REAL,
+    portfolio_turnover REAL,
+    dividend_yield REAL,
+    expense_ratio REAL,
+    holdings_json TEXT NOT NULL,
+    sectors_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS listing_status (
+    symbol TEXT PRIMARY KEY,
+    name TEXT,
+    exchange TEXT,
+    asset_type TEXT,
+    ipo_date TEXT,
+    delisting_date TEXT,
+    status TEXT NOT NULL CHECK (status IN ('Active', 'Delisted')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 POSTGRES_SCHEMA = """
@@ -314,6 +424,116 @@ CREATE TABLE IF NOT EXISTS macro_indicators (
 );
 CREATE INDEX IF NOT EXISTS idx_macro_series ON macro_indicators(series_id);
 CREATE INDEX IF NOT EXISTS idx_macro_date ON macro_indicators(date);
+
+-- Alpha Vantage Persistence Tables
+CREATE TABLE IF NOT EXISTS stock_bars_daily (
+    symbol VARCHAR(32) NOT NULL,
+    trade_date DATE NOT NULL,
+    open NUMERIC(16,4) NOT NULL,
+    high NUMERIC(16,4) NOT NULL,
+    low NUMERIC(16,4) NOT NULL,
+    close NUMERIC(16,4) NOT NULL,
+    adjusted_close NUMERIC(16,4) NOT NULL,
+    volume BIGINT NOT NULL,
+    dividend_amount NUMERIC(12,4) DEFAULT 0.0,
+    split_coefficient NUMERIC(12,4) DEFAULT 1.0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (symbol, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_bars_daily_date ON stock_bars_daily(trade_date);
+
+CREATE TABLE IF NOT EXISTS stock_bars_intraday (
+    symbol VARCHAR(32) NOT NULL,
+    bar_timestamp TIMESTAMPTZ NOT NULL,
+    interval VARCHAR(16) NOT NULL,
+    open NUMERIC(16,4) NOT NULL,
+    high NUMERIC(16,4) NOT NULL,
+    low NUMERIC(16,4) NOT NULL,
+    close NUMERIC(16,4) NOT NULL,
+    volume BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (symbol, interval, bar_timestamp)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_bars_intraday_ts ON stock_bars_intraday(bar_timestamp);
+
+CREATE TABLE IF NOT EXISTS options_chains_eod (
+    contract_id VARCHAR(64) NOT NULL,
+    symbol VARCHAR(32) NOT NULL,
+    trade_date DATE NOT NULL,
+    expiration DATE NOT NULL,
+    strike NUMERIC(16,4) NOT NULL,
+    option_type VARCHAR(8) NOT NULL CHECK (option_type IN ('call', 'put')),
+    last_price NUMERIC(16,4),
+    mark_price NUMERIC(16,4),
+    bid NUMERIC(16,4),
+    ask NUMERIC(16,4),
+    volume BIGINT DEFAULT 0,
+    open_interest BIGINT DEFAULT 0,
+    implied_volatility NUMERIC(12,6),
+    delta NUMERIC(10,6),
+    gamma NUMERIC(10,6),
+    theta NUMERIC(10,6),
+    vega NUMERIC(10,6),
+    rho NUMERIC(10,6),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (contract_id, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_options_chains_sym_date ON options_chains_eod(symbol, trade_date);
+CREATE INDEX IF NOT EXISTS idx_options_chains_exp ON options_chains_eod(expiration);
+
+CREATE TABLE IF NOT EXISTS company_fundamentals (
+    symbol VARCHAR(32) NOT NULL,
+    fiscal_date_ending VARCHAR(32) NOT NULL,
+    report_type VARCHAR(32) NOT NULL,
+    period_type VARCHAR(16) NOT NULL DEFAULT 'annual',
+    data_json JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (symbol, report_type, fiscal_date_ending, period_type)
+);
+CREATE INDEX IF NOT EXISTS idx_fundamentals_sym ON company_fundamentals(symbol);
+
+CREATE TABLE IF NOT EXISTS corporate_dividends (
+    symbol VARCHAR(32) NOT NULL,
+    ex_dividend_date DATE NOT NULL,
+    declaration_date DATE,
+    record_date DATE,
+    payment_date DATE,
+    amount NUMERIC(12,4) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (symbol, ex_dividend_date)
+);
+
+CREATE TABLE IF NOT EXISTS corporate_splits (
+    symbol VARCHAR(32) NOT NULL,
+    effective_date DATE NOT NULL,
+    split_factor NUMERIC(12,4) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (symbol, effective_date)
+);
+
+CREATE TABLE IF NOT EXISTS etf_profiles (
+    symbol VARCHAR(32) PRIMARY KEY,
+    net_assets NUMERIC(18,2),
+    portfolio_turnover NUMERIC(10,4),
+    dividend_yield NUMERIC(10,4),
+    expense_ratio NUMERIC(10,4),
+    holdings_json JSONB NOT NULL,
+    sectors_json JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS listing_status (
+    symbol VARCHAR(32) PRIMARY KEY,
+    name TEXT,
+    exchange VARCHAR(32),
+    asset_type VARCHAR(32),
+    ipo_date DATE,
+    delisting_date DATE,
+    status VARCHAR(16) NOT NULL CHECK (status IN ('Active', 'Delisted')),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """
 
 
@@ -1033,3 +1253,546 @@ class DatabaseManager:
                     )
                     count += 1
         return count
+
+    # Alpha Vantage Batch Upsert Methods
+    async def upsert_stock_bars_daily(self, records: list[dict[str, Any]]) -> int:
+        """Upsert daily adjusted stock bars."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO stock_bars_daily (
+                symbol, trade_date, open, high, low, close,
+                adjusted_close, volume, dividend_amount, split_coefficient,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            ON CONFLICT (symbol, trade_date) DO UPDATE SET
+                open = excluded.open,
+                high = excluded.high,
+                low = excluded.low,
+                close = excluded.close,
+                adjusted_close = excluded.adjusted_close,
+                volume = excluded.volume,
+                dividend_amount = excluded.dividend_amount,
+                split_coefficient = excluded.split_coefficient,
+                updated_at = datetime('now')
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["symbol"].upper(),
+                        str(r["trade_date"]),
+                        float(r["open"]),
+                        float(r["high"]),
+                        float(r["low"]),
+                        float(r["close"]),
+                        float(r["adjusted_close"]),
+                        int(r["volume"]),
+                        float(r.get("dividend_amount", 0.0)),
+                        float(r.get("split_coefficient", 1.0)),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO stock_bars_daily (
+                symbol, trade_date, open, high, low, close,
+                adjusted_close, volume, dividend_amount, split_coefficient,
+                created_at, updated_at
+            ) VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+            ON CONFLICT (symbol, trade_date) DO UPDATE SET
+                open = EXCLUDED.open,
+                high = EXCLUDED.high,
+                low = EXCLUDED.low,
+                close = EXCLUDED.close,
+                adjusted_close = EXCLUDED.adjusted_close,
+                volume = EXCLUDED.volume,
+                dividend_amount = EXCLUDED.dividend_amount,
+                split_coefficient = EXCLUDED.split_coefficient,
+                updated_at = NOW()
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["symbol"].upper(),
+                        str(r["trade_date"]),
+                        float(r["open"]),
+                        float(r["high"]),
+                        float(r["low"]),
+                        float(r["close"]),
+                        float(r["adjusted_close"]),
+                        int(r["volume"]),
+                        float(r.get("dividend_amount", 0.0)),
+                        float(r.get("split_coefficient", 1.0)),
+                    )
+                    count += 1
+        return count
+
+    async def upsert_stock_bars_intraday(self, records: list[dict[str, Any]]) -> int:
+        """Upsert intraday equity bars."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO stock_bars_intraday (
+                symbol, bar_timestamp, interval, open, high, low, close, volume, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT (symbol, interval, bar_timestamp) DO UPDATE SET
+                open = excluded.open,
+                high = excluded.high,
+                low = excluded.low,
+                close = excluded.close,
+                volume = excluded.volume
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["symbol"].upper(),
+                        str(r["bar_timestamp"]),
+                        r["interval"],
+                        float(r["open"]),
+                        float(r["high"]),
+                        float(r["low"]),
+                        float(r["close"]),
+                        int(r["volume"]),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO stock_bars_intraday (
+                symbol, bar_timestamp, interval, open, high, low, close, volume, created_at
+            ) VALUES ($1, $2::timestamptz, $3, $4, $5, $6, $7, $8, NOW())
+            ON CONFLICT (symbol, interval, bar_timestamp) DO UPDATE SET
+                open = EXCLUDED.open,
+                high = EXCLUDED.high,
+                low = EXCLUDED.low,
+                close = EXCLUDED.close,
+                volume = EXCLUDED.volume
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["symbol"].upper(),
+                        str(r["bar_timestamp"]),
+                        r["interval"],
+                        float(r["open"]),
+                        float(r["high"]),
+                        float(r["low"]),
+                        float(r["close"]),
+                        int(r["volume"]),
+                    )
+                    count += 1
+        return count
+
+    async def upsert_options_chains_eod(self, records: list[dict[str, Any]]) -> int:
+        """Upsert end-of-day options chains."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO options_chains_eod (
+                contract_id, symbol, trade_date, expiration, strike, option_type,
+                last_price, mark_price, bid, ask, volume, open_interest,
+                implied_volatility, delta, gamma, theta, vega, rho, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT (contract_id, trade_date) DO UPDATE SET
+                last_price = excluded.last_price,
+                mark_price = excluded.mark_price,
+                bid = excluded.bid,
+                ask = excluded.ask,
+                volume = excluded.volume,
+                open_interest = excluded.open_interest,
+                implied_volatility = excluded.implied_volatility,
+                delta = excluded.delta,
+                gamma = excluded.gamma,
+                theta = excluded.theta,
+                vega = excluded.vega,
+                rho = excluded.rho
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["contract_id"],
+                        r["symbol"].upper(),
+                        str(r["trade_date"]),
+                        str(r["expiration"]),
+                        float(r["strike"]),
+                        r["option_type"].lower(),
+                        float(r["last_price"]) if r.get("last_price") is not None else None,
+                        float(r["mark_price"]) if r.get("mark_price") is not None else None,
+                        float(r["bid"]) if r.get("bid") is not None else None,
+                        float(r["ask"]) if r.get("ask") is not None else None,
+                        int(r.get("volume", 0)),
+                        int(r.get("open_interest", 0)),
+                        float(r["implied_volatility"]) if r.get("implied_volatility") is not None else None,
+                        float(r["delta"]) if r.get("delta") is not None else None,
+                        float(r["gamma"]) if r.get("gamma") is not None else None,
+                        float(r["theta"]) if r.get("theta") is not None else None,
+                        float(r["vega"]) if r.get("vega") is not None else None,
+                        float(r["rho"]) if r.get("rho") is not None else None,
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO options_chains_eod (
+                contract_id, symbol, trade_date, expiration, strike, option_type,
+                last_price, mark_price, bid, ask, volume, open_interest,
+                implied_volatility, delta, gamma, theta, vega, rho, created_at
+            ) VALUES (
+                $1, $2, $3::date, $4::date, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, $16, $17, $18, NOW()
+            )
+            ON CONFLICT (contract_id, trade_date) DO UPDATE SET
+                last_price = EXCLUDED.last_price,
+                mark_price = EXCLUDED.mark_price,
+                bid = EXCLUDED.bid,
+                ask = EXCLUDED.ask,
+                volume = EXCLUDED.volume,
+                open_interest = EXCLUDED.open_interest,
+                implied_volatility = EXCLUDED.implied_volatility,
+                delta = EXCLUDED.delta,
+                gamma = EXCLUDED.gamma,
+                theta = EXCLUDED.theta,
+                vega = EXCLUDED.vega,
+                rho = EXCLUDED.rho
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["contract_id"],
+                        r["symbol"].upper(),
+                        str(r["trade_date"]),
+                        str(r["expiration"]),
+                        float(r["strike"]),
+                        r["option_type"].lower(),
+                        float(r["last_price"]) if r.get("last_price") is not None else None,
+                        float(r["mark_price"]) if r.get("mark_price") is not None else None,
+                        float(r["bid"]) if r.get("bid") is not None else None,
+                        float(r["ask"]) if r.get("ask") is not None else None,
+                        int(r.get("volume", 0)),
+                        int(r.get("open_interest", 0)),
+                        float(r["implied_volatility"]) if r.get("implied_volatility") is not None else None,
+                        float(r["delta"]) if r.get("delta") is not None else None,
+                        float(r["gamma"]) if r.get("gamma") is not None else None,
+                        float(r["theta"]) if r.get("theta") is not None else None,
+                        float(r["vega"]) if r.get("vega") is not None else None,
+                        float(r["rho"]) if r.get("rho") is not None else None,
+                    )
+                    count += 1
+        return count
+
+    async def upsert_company_fundamentals(self, records: list[dict[str, Any]]) -> int:
+        """Upsert company fundamentals (statements, overviews, earnings)."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO company_fundamentals (
+                symbol, fiscal_date_ending, report_type, period_type, data_json,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            ON CONFLICT (symbol, report_type, fiscal_date_ending, period_type) DO UPDATE SET
+                data_json = excluded.data_json,
+                updated_at = datetime('now')
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["symbol"].upper(),
+                        str(r["fiscal_date_ending"]),
+                        r["report_type"].upper(),
+                        r.get("period_type", "annual").lower(),
+                        r["data_json"],
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO company_fundamentals (
+                symbol, fiscal_date_ending, report_type, period_type, data_json,
+                created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5::jsonb, NOW(), NOW())
+            ON CONFLICT (symbol, report_type, fiscal_date_ending, period_type) DO UPDATE SET
+                data_json = EXCLUDED.data_json,
+                updated_at = NOW()
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["symbol"].upper(),
+                        str(r["fiscal_date_ending"]),
+                        r["report_type"].upper(),
+                        r.get("period_type", "annual").lower(),
+                        r["data_json"],
+                    )
+                    count += 1
+        return count
+
+    async def upsert_corporate_dividends(self, records: list[dict[str, Any]]) -> int:
+        """Upsert corporate dividend distributions."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO corporate_dividends (
+                symbol, ex_dividend_date, declaration_date, record_date, payment_date, amount, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT (symbol, ex_dividend_date) DO UPDATE SET
+                declaration_date = excluded.declaration_date,
+                record_date = excluded.record_date,
+                payment_date = excluded.payment_date,
+                amount = excluded.amount
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["symbol"].upper(),
+                        str(r["ex_dividend_date"]),
+                        str(r["declaration_date"]) if r.get("declaration_date") else None,
+                        str(r["record_date"]) if r.get("record_date") else None,
+                        str(r["payment_date"]) if r.get("payment_date") else None,
+                        float(r["amount"]),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO corporate_dividends (
+                symbol, ex_dividend_date, declaration_date, record_date, payment_date, amount, created_at
+            ) VALUES ($1, $2::date, $3::date, $4::date, $5::date, $6, NOW())
+            ON CONFLICT (symbol, ex_dividend_date) DO UPDATE SET
+                declaration_date = EXCLUDED.declaration_date,
+                record_date = EXCLUDED.record_date,
+                payment_date = EXCLUDED.payment_date,
+                amount = EXCLUDED.amount
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["symbol"].upper(),
+                        str(r["ex_dividend_date"]),
+                        str(r["declaration_date"]) if r.get("declaration_date") else None,
+                        str(r["record_date"]) if r.get("record_date") else None,
+                        str(r["payment_date"]) if r.get("payment_date") else None,
+                        float(r["amount"]),
+                    )
+                    count += 1
+        return count
+
+    async def upsert_corporate_splits(self, records: list[dict[str, Any]]) -> int:
+        """Upsert corporate stock split executions."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO corporate_splits (
+                symbol, effective_date, split_factor, created_at
+            ) VALUES (?, ?, ?, datetime('now'))
+            ON CONFLICT (symbol, effective_date) DO UPDATE SET
+                split_factor = excluded.split_factor
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["symbol"].upper(),
+                        str(r["effective_date"]),
+                        float(r["split_factor"]),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO corporate_splits (
+                symbol, effective_date, split_factor, created_at
+            ) VALUES ($1, $2::date, $3, NOW())
+            ON CONFLICT (symbol, effective_date) DO UPDATE SET
+                split_factor = EXCLUDED.split_factor
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["symbol"].upper(),
+                        str(r["effective_date"]),
+                        float(r["split_factor"]),
+                    )
+                    count += 1
+        return count
+
+    async def upsert_etf_profiles(self, records: list[dict[str, Any]]) -> int:
+        """Upsert ETF profile and constituent weightings."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO etf_profiles (
+                symbol, net_assets, portfolio_turnover, dividend_yield,
+                expense_ratio, holdings_json, sectors_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT (symbol) DO UPDATE SET
+                net_assets = excluded.net_assets,
+                portfolio_turnover = excluded.portfolio_turnover,
+                dividend_yield = excluded.dividend_yield,
+                expense_ratio = excluded.expense_ratio,
+                holdings_json = excluded.holdings_json,
+                sectors_json = excluded.sectors_json,
+                updated_at = datetime('now')
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["symbol"].upper(),
+                        float(r["net_assets"]) if r.get("net_assets") is not None else None,
+                        float(r["portfolio_turnover"]) if r.get("portfolio_turnover") is not None else None,
+                        float(r["dividend_yield"]) if r.get("dividend_yield") is not None else None,
+                        float(r["expense_ratio"]) if r.get("expense_ratio") is not None else None,
+                        r.get("holdings_json", "[]"),
+                        r.get("sectors_json", "[]"),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO etf_profiles (
+                symbol, net_assets, portfolio_turnover, dividend_yield,
+                expense_ratio, holdings_json, sectors_json, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, NOW())
+            ON CONFLICT (symbol) DO UPDATE SET
+                net_assets = EXCLUDED.net_assets,
+                portfolio_turnover = EXCLUDED.portfolio_turnover,
+                dividend_yield = EXCLUDED.dividend_yield,
+                expense_ratio = EXCLUDED.expense_ratio,
+                holdings_json = EXCLUDED.holdings_json,
+                sectors_json = EXCLUDED.sectors_json,
+                updated_at = NOW()
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["symbol"].upper(),
+                        float(r["net_assets"]) if r.get("net_assets") is not None else None,
+                        float(r["portfolio_turnover"]) if r.get("portfolio_turnover") is not None else None,
+                        float(r["dividend_yield"]) if r.get("dividend_yield") is not None else None,
+                        float(r["expense_ratio"]) if r.get("expense_ratio") is not None else None,
+                        r.get("holdings_json", "[]"),
+                        r.get("sectors_json", "[]"),
+                    )
+                    count += 1
+        return count
+
+    async def upsert_listing_status(self, records: list[dict[str, Any]]) -> int:
+        """Upsert exchange listing status registry."""
+        if not records:
+            return 0
+        count = 0
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            query = """
+            INSERT INTO listing_status (
+                symbol, name, exchange, asset_type, ipo_date, delisting_date, status, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT (symbol) DO UPDATE SET
+                name = excluded.name,
+                exchange = excluded.exchange,
+                asset_type = excluded.asset_type,
+                ipo_date = excluded.ipo_date,
+                delisting_date = excluded.delisting_date,
+                status = excluded.status,
+                updated_at = datetime('now')
+            """
+            for r in records:
+                cur = await self._sqlite_conn.execute(
+                    query,
+                    (
+                        r["symbol"].upper(),
+                        r.get("name"),
+                        r.get("exchange"),
+                        r.get("asset_type"),
+                        str(r["ipo_date"]) if r.get("ipo_date") else None,
+                        str(r["delisting_date"]) if r.get("delisting_date") else None,
+                        r.get("status", "Active"),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            await self._sqlite_conn.commit()
+        else:
+            assert self._pg_pool is not None
+            query = """
+            INSERT INTO listing_status (
+                symbol, name, exchange, asset_type, ipo_date, delisting_date, status, updated_at
+            ) VALUES ($1, $2, $3, $4, $5::date, $6::date, $7, NOW())
+            ON CONFLICT (symbol) DO UPDATE SET
+                name = EXCLUDED.name,
+                exchange = EXCLUDED.exchange,
+                asset_type = EXCLUDED.asset_type,
+                ipo_date = EXCLUDED.ipo_date,
+                delisting_date = EXCLUDED.delisting_date,
+                status = EXCLUDED.status,
+                updated_at = NOW()
+            """
+            async with self._pg_pool.acquire() as conn:
+                for r in records:
+                    await conn.execute(
+                        query,
+                        r["symbol"].upper(),
+                        r.get("name"),
+                        r.get("exchange"),
+                        r.get("asset_type"),
+                        str(r["ipo_date"]) if r.get("ipo_date") else None,
+                        str(r["delisting_date"]) if r.get("delisting_date") else None,
+                        r.get("status", "Active"),
+                    )
+                    count += 1
+        return count
+

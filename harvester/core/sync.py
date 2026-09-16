@@ -82,6 +82,14 @@ async def sync_sqlite_to_postgres(
         "finra_otc_volume",
         "insider_trades",
         "institutional_holdings",
+        "stock_bars_daily",
+        "stock_bars_intraday",
+        "options_chains_eod",
+        "company_fundamentals",
+        "corporate_dividends",
+        "corporate_splits",
+        "etf_profiles",
+        "listing_status",
     ]
 
     active_tables = [t for t in all_sync_tables if target_tables is None or t in target_tables]
@@ -119,6 +127,22 @@ async def sync_sqlite_to_postgres(
                 synced = await _sync_insider_trades(sqlite_conn, pg_manager._pg_pool, batch_size)
             elif tbl == "institutional_holdings":
                 synced = await _sync_institutional_holdings(sqlite_conn, pg_manager._pg_pool, batch_size)
+            elif tbl == "stock_bars_daily":
+                synced = await _sync_stock_bars_daily(sqlite_conn, pg_manager._pg_pool, batch_size)
+            elif tbl == "stock_bars_intraday":
+                synced = await _sync_stock_bars_intraday(sqlite_conn, pg_manager._pg_pool, batch_size)
+            elif tbl == "options_chains_eod":
+                synced = await _sync_options_chains_eod(sqlite_conn, pg_manager._pg_pool, batch_size)
+            elif tbl == "company_fundamentals":
+                synced = await _sync_company_fundamentals(sqlite_conn, pg_manager._pg_pool, batch_size)
+            elif tbl == "corporate_dividends":
+                synced = await _sync_corporate_dividends(sqlite_conn, pg_manager._pg_pool, batch_size)
+            elif tbl == "corporate_splits":
+                synced = await _sync_corporate_splits(sqlite_conn, pg_manager._pg_pool, batch_size)
+            elif tbl == "etf_profiles":
+                synced = await _sync_etf_profiles(sqlite_conn, pg_manager._pg_pool, batch_size)
+            elif tbl == "listing_status":
+                synced = await _sync_listing_status(sqlite_conn, pg_manager._pg_pool, batch_size)
 
             elapsed = round(time.perf_counter() - t0, 2)
             summary[tbl] = {
@@ -450,3 +474,341 @@ async def _sync_institutional_holdings(sqlite_conn: sqlite3.Connection, pg_pool:
                 await conn.executemany(query, batch)
                 total += len(batch)
     return total
+
+
+async def _sync_stock_bars_daily(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
+    query = """
+    INSERT INTO stock_bars_daily (
+        symbol, trade_date, open, high, low, close, adjusted_close, volume,
+        dividend_amount, split_coefficient, created_at, updated_at
+    ) VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+    ON CONFLICT (symbol, trade_date) DO UPDATE SET
+        open = EXCLUDED.open,
+        high = EXCLUDED.high,
+        low = EXCLUDED.low,
+        close = EXCLUDED.close,
+        adjusted_close = EXCLUDED.adjusted_close,
+        volume = EXCLUDED.volume,
+        dividend_amount = EXCLUDED.dividend_amount,
+        split_coefficient = EXCLUDED.split_coefficient,
+        updated_at = NOW()
+    """
+    cur = sqlite_conn.cursor()
+    cur.execute("SELECT symbol, trade_date, open, high, low, close, adjusted_close, volume, dividend_amount, split_coefficient FROM stock_bars_daily")
+    total = 0
+    async with pg_pool.acquire() as conn:
+        while True:
+            rows = cur.fetchmany(batch_size)
+            if not rows:
+                break
+            batch = []
+            for r in rows:
+                t_date = _parse_date(r["trade_date"])
+                if t_date is None:
+                    continue
+                batch.append((
+                    _clean_str(r["symbol"]),
+                    t_date,
+                    float(r["open"]),
+                    float(r["high"]),
+                    float(r["low"]),
+                    float(r["close"]),
+                    float(r["adjusted_close"]),
+                    int(r["volume"]),
+                    float(r["dividend_amount"] or 0.0),
+                    float(r["split_coefficient"] or 1.0),
+                ))
+            if batch:
+                await conn.executemany(query, batch)
+                total += len(batch)
+    return total
+
+
+async def _sync_stock_bars_intraday(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
+    query = """
+    INSERT INTO stock_bars_intraday (
+        symbol, bar_timestamp, interval, open, high, low, close, volume, created_at
+    ) VALUES ($1, $2::timestamptz, $3, $4, $5, $6, $7, $8, NOW())
+    ON CONFLICT (symbol, interval, bar_timestamp) DO UPDATE SET
+        open = EXCLUDED.open,
+        high = EXCLUDED.high,
+        low = EXCLUDED.low,
+        close = EXCLUDED.close,
+        volume = EXCLUDED.volume
+    """
+    cur = sqlite_conn.cursor()
+    cur.execute("SELECT symbol, bar_timestamp, interval, open, high, low, close, volume FROM stock_bars_intraday")
+    total = 0
+    async with pg_pool.acquire() as conn:
+        while True:
+            rows = cur.fetchmany(batch_size)
+            if not rows:
+                break
+            batch = []
+            for r in rows:
+                batch.append((
+                    _clean_str(r["symbol"]),
+                    str(r["bar_timestamp"]),
+                    _clean_str(r["interval"]),
+                    float(r["open"]),
+                    float(r["high"]),
+                    float(r["low"]),
+                    float(r["close"]),
+                    int(r["volume"]),
+                ))
+            if batch:
+                await conn.executemany(query, batch)
+                total += len(batch)
+    return total
+
+
+async def _sync_options_chains_eod(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
+    query = """
+    INSERT INTO options_chains_eod (
+        contract_id, symbol, trade_date, expiration, strike, option_type,
+        last_price, mark_price, bid, ask, volume, open_interest,
+        implied_volatility, delta, gamma, theta, vega, rho, created_at
+    ) VALUES (
+        $1, $2, $3::date, $4::date, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18, NOW()
+    )
+    ON CONFLICT (contract_id, trade_date) DO UPDATE SET
+        last_price = EXCLUDED.last_price,
+        mark_price = EXCLUDED.mark_price,
+        bid = EXCLUDED.bid,
+        ask = EXCLUDED.ask,
+        volume = EXCLUDED.volume,
+        open_interest = EXCLUDED.open_interest,
+        implied_volatility = EXCLUDED.implied_volatility,
+        delta = EXCLUDED.delta,
+        gamma = EXCLUDED.gamma,
+        theta = EXCLUDED.theta,
+        vega = EXCLUDED.vega,
+        rho = EXCLUDED.rho
+    """
+    cur = sqlite_conn.cursor()
+    cur.execute("""
+    SELECT contract_id, symbol, trade_date, expiration, strike, option_type,
+           last_price, mark_price, bid, ask, volume, open_interest,
+           implied_volatility, delta, gamma, theta, vega, rho
+    FROM options_chains_eod
+    """)
+    total = 0
+    async with pg_pool.acquire() as conn:
+        while True:
+            rows = cur.fetchmany(batch_size)
+            if not rows:
+                break
+            batch = []
+            for r in rows:
+                t_date = _parse_date(r["trade_date"])
+                exp_date = _parse_date(r["expiration"])
+                if t_date is None or exp_date is None:
+                    continue
+                batch.append((
+                    _clean_str(r["contract_id"]),
+                    _clean_str(r["symbol"]),
+                    t_date,
+                    exp_date,
+                    float(r["strike"]),
+                    _clean_str(r["option_type"]),
+                    float(r["last_price"]) if r["last_price"] is not None else None,
+                    float(r["mark_price"]) if r["mark_price"] is not None else None,
+                    float(r["bid"]) if r["bid"] is not None else None,
+                    float(r["ask"]) if r["ask"] is not None else None,
+                    int(r["volume"] or 0),
+                    int(r["open_interest"] or 0),
+                    float(r["implied_volatility"]) if r["implied_volatility"] is not None else None,
+                    float(r["delta"]) if r["delta"] is not None else None,
+                    float(r["gamma"]) if r["gamma"] is not None else None,
+                    float(r["theta"]) if r["theta"] is not None else None,
+                    float(r["vega"]) if r["vega"] is not None else None,
+                    float(r["rho"]) if r["rho"] is not None else None,
+                ))
+            if batch:
+                await conn.executemany(query, batch)
+                total += len(batch)
+    return total
+
+
+async def _sync_company_fundamentals(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
+    query = """
+    INSERT INTO company_fundamentals (
+        symbol, fiscal_date_ending, report_type, period_type, data_json,
+        created_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5::jsonb, NOW(), NOW())
+    ON CONFLICT (symbol, report_type, fiscal_date_ending, period_type) DO UPDATE SET
+        data_json = EXCLUDED.data_json,
+        updated_at = NOW()
+    """
+    cur = sqlite_conn.cursor()
+    cur.execute("SELECT symbol, fiscal_date_ending, report_type, period_type, data_json FROM company_fundamentals")
+    total = 0
+    async with pg_pool.acquire() as conn:
+        while True:
+            rows = cur.fetchmany(batch_size)
+            if not rows:
+                break
+            batch = []
+            for r in rows:
+                batch.append((
+                    _clean_str(r["symbol"]),
+                    _clean_str(r["fiscal_date_ending"]),
+                    _clean_str(r["report_type"]),
+                    _clean_str(r["period_type"]),
+                    r["data_json"],
+                ))
+            if batch:
+                await conn.executemany(query, batch)
+                total += len(batch)
+    return total
+
+
+async def _sync_corporate_dividends(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
+    query = """
+    INSERT INTO corporate_dividends (
+        symbol, ex_dividend_date, declaration_date, record_date, payment_date, amount, created_at
+    ) VALUES ($1, $2::date, $3::date, $4::date, $5::date, $6, NOW())
+    ON CONFLICT (symbol, ex_dividend_date) DO UPDATE SET
+        declaration_date = EXCLUDED.declaration_date,
+        record_date = EXCLUDED.record_date,
+        payment_date = EXCLUDED.payment_date,
+        amount = EXCLUDED.amount
+    """
+    cur = sqlite_conn.cursor()
+    cur.execute("SELECT symbol, ex_dividend_date, declaration_date, record_date, payment_date, amount FROM corporate_dividends")
+    total = 0
+    async with pg_pool.acquire() as conn:
+        while True:
+            rows = cur.fetchmany(batch_size)
+            if not rows:
+                break
+            batch = []
+            for r in rows:
+                ex_d = _parse_date(r["ex_dividend_date"])
+                if ex_d is None:
+                    continue
+                batch.append((
+                    _clean_str(r["symbol"]),
+                    ex_d,
+                    _parse_date(r["declaration_date"]),
+                    _parse_date(r["record_date"]),
+                    _parse_date(r["payment_date"]),
+                    float(r["amount"]),
+                ))
+            if batch:
+                await conn.executemany(query, batch)
+                total += len(batch)
+    return total
+
+
+async def _sync_corporate_splits(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
+    query = """
+    INSERT INTO corporate_splits (
+        symbol, effective_date, split_factor, created_at
+    ) VALUES ($1, $2::date, $3, NOW())
+    ON CONFLICT (symbol, effective_date) DO UPDATE SET
+        split_factor = EXCLUDED.split_factor
+    """
+    cur = sqlite_conn.cursor()
+    cur.execute("SELECT symbol, effective_date, split_factor FROM corporate_splits")
+    total = 0
+    async with pg_pool.acquire() as conn:
+        while True:
+            rows = cur.fetchmany(batch_size)
+            if not rows:
+                break
+            batch = []
+            for r in rows:
+                eff_d = _parse_date(r["effective_date"])
+                if eff_d is None:
+                    continue
+                batch.append((
+                    _clean_str(r["symbol"]),
+                    eff_d,
+                    float(r["split_factor"]),
+                ))
+            if batch:
+                await conn.executemany(query, batch)
+                total += len(batch)
+    return total
+
+
+async def _sync_etf_profiles(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
+    query = """
+    INSERT INTO etf_profiles (
+        symbol, net_assets, portfolio_turnover, dividend_yield,
+        expense_ratio, holdings_json, sectors_json, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, NOW())
+    ON CONFLICT (symbol) DO UPDATE SET
+        net_assets = EXCLUDED.net_assets,
+        portfolio_turnover = EXCLUDED.portfolio_turnover,
+        dividend_yield = EXCLUDED.dividend_yield,
+        expense_ratio = EXCLUDED.expense_ratio,
+        holdings_json = EXCLUDED.holdings_json,
+        sectors_json = EXCLUDED.sectors_json,
+        updated_at = NOW()
+    """
+    cur = sqlite_conn.cursor()
+    cur.execute("SELECT symbol, net_assets, portfolio_turnover, dividend_yield, expense_ratio, holdings_json, sectors_json FROM etf_profiles")
+    total = 0
+    async with pg_pool.acquire() as conn:
+        while True:
+            rows = cur.fetchmany(batch_size)
+            if not rows:
+                break
+            batch = []
+            for r in rows:
+                batch.append((
+                    _clean_str(r["symbol"]),
+                    float(r["net_assets"]) if r["net_assets"] is not None else None,
+                    float(r["portfolio_turnover"]) if r["portfolio_turnover"] is not None else None,
+                    float(r["dividend_yield"]) if r["dividend_yield"] is not None else None,
+                    float(r["expense_ratio"]) if r["expense_ratio"] is not None else None,
+                    r["holdings_json"],
+                    r["sectors_json"],
+                ))
+            if batch:
+                await conn.executemany(query, batch)
+                total += len(batch)
+    return total
+
+
+async def _sync_listing_status(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
+    query = """
+    INSERT INTO listing_status (
+        symbol, name, exchange, asset_type, ipo_date, delisting_date, status, updated_at
+    ) VALUES ($1, $2, $3, $4, $5::date, $6::date, $7, NOW())
+    ON CONFLICT (symbol) DO UPDATE SET
+        name = EXCLUDED.name,
+        exchange = EXCLUDED.exchange,
+        asset_type = EXCLUDED.asset_type,
+        ipo_date = EXCLUDED.ipo_date,
+        delisting_date = EXCLUDED.delisting_date,
+        status = EXCLUDED.status,
+        updated_at = NOW()
+    """
+    cur = sqlite_conn.cursor()
+    cur.execute("SELECT symbol, name, exchange, asset_type, ipo_date, delisting_date, status FROM listing_status")
+    total = 0
+    async with pg_pool.acquire() as conn:
+        while True:
+            rows = cur.fetchmany(batch_size)
+            if not rows:
+                break
+            batch = []
+            for r in rows:
+                batch.append((
+                    _clean_str(r["symbol"]),
+                    _clean_str(r["name"]),
+                    _clean_str(r["exchange"]),
+                    _clean_str(r["asset_type"]),
+                    _parse_date(r["ipo_date"]),
+                    _parse_date(r["delisting_date"]),
+                    _clean_str(r["status"]) or "Active",
+                ))
+            if batch:
+                await conn.executemany(query, batch)
+                total += len(batch)
+    return total
+

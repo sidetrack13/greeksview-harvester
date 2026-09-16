@@ -58,13 +58,15 @@ def list_command() -> None:
 
 @app.command(name="run")
 def run_command(
-    worker_name: Annotated[str, typer.Argument(help="Name of worker (congressional, sec_edgar, finra_darkpool, cboe_options, fred_macro)")],
+    worker_name: Annotated[str, typer.Argument(help="Name of worker (congressional, sec_edgar, finra_darkpool, cboe_options, fred_macro, alphavantage)")],
     limit: Annotated[int | None, typer.Option("--limit", "-l", help="Record or symbol limit (default: None for max history)")] = None,
     mock: Annotated[bool, typer.Option("--mock", help="Use synthetic mock/simulation data")] = False,
     year: Annotated[int | None, typer.Option("--year", "-y", help="Target calendar year")] = None,
     all_years: Annotated[bool, typer.Option("--all-years/--single-year", help="Sweep all historical years back to 2012 (default: True)")] = True,
     days_back: Annotated[int | None, typer.Option("--days-back", help="Historical trading days back for CBOE (default: 252 for full year)")] = None,
     weeks_back: Annotated[int | None, typer.Option("--weeks-back", help="Historical weeks back for FINRA OTC (default: 52 for full year)")] = None,
+    dataset: Annotated[str | None, typer.Option("--dataset", "-d", help="Dataset for Alpha Vantage (daily, intraday, options, fundamentals, actions, reference, all)")] = None,
+    symbols: Annotated[str | None, typer.Option("--symbols", "-s", help="Comma-separated ticker symbols (e.g. SPY,QQQ,AAPL)")] = None,
     db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
 ) -> None:
     """Execute a single background worker independently."""
@@ -103,6 +105,10 @@ def run_command(
                 kwargs["days_back"] = days_back
             if weeks_back is not None:
                 kwargs["weeks_back"] = weeks_back
+            if dataset is not None:
+                kwargs["dataset"] = dataset
+            if symbols is not None:
+                kwargs["symbols"] = symbols
             res = await worker.run_once(**kwargs)
 
         status_style = "bold green" if res.is_success else "bold red"

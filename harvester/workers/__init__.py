@@ -12,6 +12,7 @@ Registers all autonomous harvesting workers:
 from typing import Any
 
 from harvester.core.base_worker import BaseWorker
+from harvester.workers.alphavantage.worker import AlphaVantageWorker
 from harvester.workers.cboe_options.worker import CboeOptionsWorker
 from harvester.workers.congressional.worker import CongressionalWorker
 from harvester.workers.finra_darkpool.worker import FinraDarkPoolWorker
@@ -24,6 +25,7 @@ WORKER_REGISTRY: dict[str, type[BaseWorker]] = {
     "finra_darkpool": FinraDarkPoolWorker,
     "cboe_options": CboeOptionsWorker,
     "fred_macro": FredMacroWorker,
+    "alphavantage": AlphaVantageWorker,
 }
 
 
@@ -61,4 +63,5 @@ __all__ = [
     "FinraDarkPoolWorker",
     "CboeOptionsWorker",
     "FredMacroWorker",
+    "AlphaVantageWorker",
 ]
