@@ -8,9 +8,19 @@ from pathlib import Path
 from typing import Any
 
 from harvester.config import Settings, get_settings
-from harvester.core.db import POSTGRES_SCHEMA, DatabaseManager
+from harvester.core.db import (
+    POSTGRES_SCHEMA,
+    DatabaseManager,
+    as_vendor_eastern,
+    optional_int,
+    sqlite_file_is_mock,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class MockDatabaseRefusedError(RuntimeError):
+    """Raised when sync-pg is pointed at a SQLite file a mock run has written to."""
 
 
 def _parse_date(val: Any) -> date | None:
@@ -88,6 +98,11 @@ async def sync_sqlite_to_postgres(
     db_file = Path(sqlite_path)
     if not db_file.exists():
         raise FileNotFoundError(f"Source SQLite file not found: {sqlite_path}")
+    if sqlite_file_is_mock(sqlite_path):
+        raise MockDatabaseRefusedError(
+            f"{sqlite_path} was written by a --mock run, so it holds fabricated rows that cannot be "
+            "told apart from real ones. Refusing to push it to PostgreSQL. Harvest into a fresh file."
+        )
 
     app_settings = settings or get_settings()
     app_settings.database_url = pg_url
@@ -636,6 +651,9 @@ async def _sync_stock_bars_intraday(
                 b_ts = _parse_datetime(r["bar_timestamp"])
                 if b_ts is None:
                     continue
+                # SQLite keeps the vendor's US/Eastern wall-clock string; give the
+                # instant its zone before it reaches TIMESTAMPTZ.
+                b_ts = as_vendor_eastern(b_ts)
                 batch.append((
                     _clean_str(r["symbol"]),
                     b_ts,
@@ -716,8 +734,8 @@ async def _sync_options_chains_eod(
                     float(r["mark_price"]) if r["mark_price"] is not None else None,
                     float(r["bid"]) if r["bid"] is not None else None,
                     float(r["ask"]) if r["ask"] is not None else None,
-                    int(r["volume"] or 0),
-                    int(r["open_interest"] or 0),
+                    optional_int(r["volume"]),
+                    optional_int(r["open_interest"]),
                     float(r["implied_volatility"]) if r["implied_volatility"] is not None else None,
                     float(r["delta"]) if r["delta"] is not None else None,
                     float(r["gamma"]) if r["gamma"] is not None else None,

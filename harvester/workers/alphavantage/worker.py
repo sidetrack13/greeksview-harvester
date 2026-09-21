@@ -11,23 +11,142 @@ Autonomous background worker ingesting:
 
 Harvester is the Single Source of Truth for sourcing Alpha Vantage data into GreeksView.
 Adheres to the BaseWorker contract with rate-limited, resilient execution.
+
+Honesty rules for stored rows:
+  - A field the vendor did not send is stored as NULL or the row is skipped and
+    counted; it never becomes 0 and never borrows a neighbouring value.
+  - An options row is stored under its own ``date`` field, never the date asked
+    for: Alpha Vantage answers a non-session date with the latest session it has.
+  - Intraday ``bar_timestamp`` is stored in SQLite as the vendor's US/Eastern
+    wall-clock string ("YYYY-MM-DD HH:MM:SS"); the Eastern zone is attached when a
+    bar is written to PostgreSQL (see harvester.core.db.as_vendor_eastern).
 """
 
 import json
 import logging
+import re
 import time
-from datetime import UTC, datetime, timedelta
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from harvester.config import Settings, get_settings
 from harvester.core.base_worker import BaseWorker, WorkerResult
-from harvester.core.db import DatabaseManager
+from harvester.core.db import MOCK_SQLITE_PATH, DatabaseManager
 from harvester.workers.alphavantage.api_client import AlphaVantageClient, AlphaVantageError
 from harvester.workers.alphavantage.pacer import AlphaVantagePacer
 
 logger = logging.getLogger("harvester.workers.alphavantage")
 
 DEFAULT_UNIVERSE = ["SPY", "QQQ", "IWM", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA"]
+
+INTRADAY_INTERVALS = ("1min", "5min", "15min", "30min", "60min")
+DAILY_OUTPUTSIZES = ("compact", "full")
+
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ISO_MONTH = re.compile(r"^\d{4}-\d{2}$")
+_VENDOR_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+
+# Every field a stored bar needs. A bar missing any of them is skipped and counted.
+_DAILY_FIELDS = (
+    ("open", "1. open"),
+    ("high", "2. high"),
+    ("low", "3. low"),
+    ("close", "4. close"),
+    ("adjusted_close", "5. adjusted close"),
+    ("volume", "6. volume"),
+    ("dividend_amount", "7. dividend amount"),
+    ("split_coefficient", "8. split coefficient"),
+)
+_INTRADAY_FIELDS = (
+    ("open", "1. open"),
+    ("high", "2. high"),
+    ("low", "3. low"),
+    ("close", "4. close"),
+    ("volume", "5. volume"),
+)
+
+
+def is_iso_date(value: Any) -> bool:
+    """True for a real calendar date written exactly as YYYY-MM-DD."""
+    if not isinstance(value, str) or not _ISO_DATE.match(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def parse_trade_dates(spec: str) -> list[str]:
+    """Parse ``--trade-dates``: comma-separated YYYY-MM-DD and/or ``@file`` (one date per line).
+
+    Blank lines and ``#`` comments in a file are ignored. Returns sorted unique dates.
+    Raises ValueError on any token that is not a real YYYY-MM-DD date, or when no
+    date is given, and OSError when a file cannot be read.
+    """
+    tokens: list[str] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if part.startswith("@"):
+            for line in Path(part[1:]).read_text().splitlines():
+                line = line.split("#", 1)[0].strip()
+                if line:
+                    tokens.append(line)
+        else:
+            tokens.append(part)
+    bad = [t for t in tokens if not is_iso_date(t)]
+    if bad:
+        raise ValueError(f"Not a YYYY-MM-DD date: {', '.join(bad)}")
+    if not tokens:
+        raise ValueError("No trade dates given.")
+    return sorted(set(tokens))
+
+
+def _optional_float(value: Any) -> float | None:
+    """None or blank means the vendor did not send it; anything else must parse."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text == "":
+        return None
+    return float(text)
+
+
+def _optional_count(value: Any) -> int | None:
+    """Volume / open interest: None when not sent, a whole non-negative number otherwise."""
+    number = _optional_float(value)
+    if number is None:
+        return None
+    if not number.is_integer() or number < 0:
+        raise ValueError(f"not a whole count: {value!r}")
+    return int(number)
+
+
+@dataclass
+class HarvestReport:
+    """What a run could not store, and why. Carried in WorkerResult.metadata["report"]."""
+
+    skipped: Counter[str] = field(default_factory=Counter)
+    filtered: Counter[str] = field(default_factory=Counter)
+    date_substitutions: list[dict[str, Any]] = field(default_factory=list)
+    spot_unknown: list[str] = field(default_factory=list)
+    empty_responses: list[str] = field(default_factory=list)
+    fetch_errors: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "skipped": dict(self.skipped),
+            "filtered": dict(self.filtered),
+            "date_substitutions": list(self.date_substitutions),
+            "spot_unknown": list(self.spot_unknown),
+            "empty_responses": list(self.empty_responses),
+            "fetch_errors": list(self.fetch_errors),
+        }
 
 
 class AlphaVantageWorker(BaseWorker):
@@ -60,6 +179,7 @@ class AlphaVantageWorker(BaseWorker):
         self.pacer = AlphaVantagePacer(
             max_per_second=self.settings.alphavantage_max_per_second,
             cooldown_ms=self.settings.alphavantage_cooldown_ms,
+            requests_per_minute=self.settings.alphavantage_rpm,
         )
         self.client = AlphaVantageClient(
             api_key=self.settings.alphavantage_api_key,
@@ -79,14 +199,46 @@ class AlphaVantageWorker(BaseWorker):
             res = res[:limit]
         return res
 
+    @staticmethod
+    def _parse_bar(
+        bar: Any,
+        fields: tuple[tuple[str, str], ...],
+        report: HarvestReport,
+        dataset: str,
+    ) -> dict[str, Any] | None:
+        """Parse one vendor bar. A missing or unparseable field skips the bar (counted)."""
+        if not isinstance(bar, dict):
+            report.skipped[f"{dataset}_malformed_bar"] += 1
+            return None
+        parsed: dict[str, Any] = {}
+        for name, key in fields:
+            raw = bar.get(key)
+            if raw is None or str(raw).strip() == "":
+                report.skipped[f"{dataset}_missing_field"] += 1
+                return None
+            try:
+                parsed[name] = _optional_count(raw) if name == "volume" else float(str(raw).strip())
+            except ValueError:
+                report.skipped[f"{dataset}_malformed_field"] += 1
+                return None
+        return parsed
+
     async def download_daily_bars(
         self,
         db: DatabaseManager,
         symbols: list[str],
         outputsize: str = "compact",
         use_mock: bool = False,
+        report: HarvestReport | None = None,
     ) -> tuple[int, int]:
-        """Download daily adjusted bars and persist to stock_bars_daily."""
+        """Download daily adjusted bars and persist to stock_bars_daily.
+
+        ``outputsize="full"`` returns the whole history (for backfills); the vendor's
+        default ``compact`` returns only the latest 100 sessions.
+        """
+        if outputsize not in DAILY_OUTPUTSIZES:
+            raise ValueError(f"outputsize must be one of {', '.join(DAILY_OUTPUTSIZES)}, got {outputsize!r}")
+        rep = report if report is not None else HarvestReport()
         harvested = 0
         upserted = 0
 
@@ -114,23 +266,19 @@ class AlphaVantageWorker(BaseWorker):
                     "TIME_SERIES_DAILY_ADJUSTED",
                     {"symbol": sym, "outputsize": outputsize},
                 )
-                ts = data.get("Time Series (Daily)", {})
+                ts = data.get("Time Series (Daily)")
+                if not isinstance(ts, dict):
+                    rep.fetch_errors.append(f"TIME_SERIES_DAILY_ADJUSTED {sym}: response had no 'Time Series (Daily)'")
+                    continue
                 for t_date, bar in ts.items():
-                    try:
-                        records.append({
-                            "symbol": sym,
-                            "trade_date": t_date,
-                            "open": float(bar.get("1. open", 0)),
-                            "high": float(bar.get("2. high", 0)),
-                            "low": float(bar.get("3. low", 0)),
-                            "close": float(bar.get("4. close", 0)),
-                            "adjusted_close": float(bar.get("5. adjusted close", 0)),
-                            "volume": int(bar.get("6. volume", 0)),
-                            "dividend_amount": float(bar.get("7. dividend amount", 0)),
-                            "split_coefficient": float(bar.get("8. split coefficient", 1)),
-                        })
-                    except (ValueError, TypeError) as exc:
-                        logger.warning("Skipping malformed daily bar for %s (%s): %s", sym, t_date, exc)
+                    if not is_iso_date(t_date):
+                        rep.skipped["daily_malformed_date"] += 1
+                        continue
+                    parsed = self._parse_bar(bar, _DAILY_FIELDS, rep, "daily")
+                    if parsed is None:
+                        logger.warning("Skipping incomplete daily bar for %s (%s)", sym, t_date)
+                        continue
+                    records.append({"symbol": sym, "trade_date": t_date, **parsed})
 
             harvested += len(records)
             if records:
@@ -145,13 +293,30 @@ class AlphaVantageWorker(BaseWorker):
         interval: str = "5min",
         months: list[str] | None = None,
         use_mock: bool = False,
+        extended_hours: bool = True,
+        report: HarvestReport | None = None,
     ) -> tuple[int, int]:
-        """Download intraday stock bars and persist to stock_bars_intraday."""
+        """Download intraday stock bars and persist to stock_bars_intraday.
+
+        One request per (symbol, month). Every request asks for ``outputsize=full``
+        (the whole month, or the trailing 30 days when no month is given) and
+        ``adjusted=false`` (as-traded prices). ``extended_hours`` defaults to True so
+        pre-market bars (e.g. around 08:30 ET releases) are kept; readers filter
+        regular hours themselves. Timestamps are stored as the vendor's US/Eastern
+        wall-clock string.
+        """
+        if interval not in INTRADAY_INTERVALS:
+            raise ValueError(f"interval must be one of {', '.join(INTRADAY_INTERVALS)}, got {interval!r}")
+        month_list: list[str | None] = list(months) if months else [None]
+        bad_months = [m for m in month_list if m is not None and not _ISO_MONTH.match(m)]
+        if bad_months:
+            raise ValueError(f"months must be YYYY-MM, got {', '.join(str(m) for m in bad_months)}")
+        rep = report if report is not None else HarvestReport()
         harvested = 0
         upserted = 0
 
         for sym in symbols:
-            records = []
+            records: list[dict[str, Any]] = []
             if use_mock:
                 now = datetime.now(UTC)
                 for m in range(12):
@@ -166,33 +331,117 @@ class AlphaVantageWorker(BaseWorker):
                         "close": 450.2 + m * 0.1,
                         "volume": 25000 + m * 100,
                     })
-            else:
-                params: dict[str, Any] = {"symbol": sym, "interval": interval}
-                if months and len(months) > 0:
-                    params["month"] = months[0]
-                data = await self.client.fetch_json("TIME_SERIES_INTRADAY", params)
-                key = f"Time Series ({interval})"
-                ts = data.get(key, {})
-                for ts_str, bar in ts.items():
-                    try:
-                        records.append({
-                            "symbol": sym,
-                            "bar_timestamp": ts_str,
-                            "interval": interval,
-                            "open": float(bar.get("1. open", 0)),
-                            "high": float(bar.get("2. high", 0)),
-                            "low": float(bar.get("3. low", 0)),
-                            "close": float(bar.get("4. close", 0)),
-                            "volume": int(bar.get("5. volume", 0)),
-                        })
-                    except (ValueError, TypeError) as exc:
-                        logger.warning("Skipping malformed intraday bar for %s (%s): %s", sym, ts_str, exc)
+                harvested += len(records)
+                if records:
+                    upserted += await db.upsert_stock_bars_intraday(records)
+                continue
 
-            harvested += len(records)
-            if records:
-                upserted += await db.upsert_stock_bars_intraday(records)
+            for month in month_list:
+                params: dict[str, Any] = {
+                    "symbol": sym,
+                    "interval": interval,
+                    "outputsize": "full",
+                    "adjusted": "false",
+                    "extended_hours": "true" if extended_hours else "false",
+                }
+                if month is not None:
+                    params["month"] = month
+                label = f"TIME_SERIES_INTRADAY {sym} {interval} {month or 'latest'}"
+                try:
+                    data = await self.client.fetch_json("TIME_SERIES_INTRADAY", params)
+                except AlphaVantageError as exc:
+                    logger.warning("%s fetch error: %s", label, exc)
+                    rep.fetch_errors.append(f"{label}: status {exc.status} ({exc.label})")
+                    continue
+                ts = data.get(f"Time Series ({interval})")
+                if not isinstance(ts, dict):
+                    rep.fetch_errors.append(f"{label}: response had no 'Time Series ({interval})'")
+                    continue
+                month_records: list[dict[str, Any]] = []
+                for ts_str, bar in ts.items():
+                    if not isinstance(ts_str, str) or not _VENDOR_TIMESTAMP.match(ts_str):
+                        rep.skipped["intraday_malformed_timestamp"] += 1
+                        continue
+                    parsed = self._parse_bar(bar, _INTRADAY_FIELDS, rep, "intraday")
+                    if parsed is None:
+                        logger.warning("Skipping incomplete intraday bar for %s (%s)", sym, ts_str)
+                        continue
+                    month_records.append({"symbol": sym, "bar_timestamp": ts_str, "interval": interval, **parsed})
+                harvested += len(month_records)
+                if month_records:
+                    upserted += await db.upsert_stock_bars_intraday(month_records)
 
         return harvested, upserted
+
+    @staticmethod
+    def resolve_target_dates(trade_dates: list[str] | None, days_back: int | None) -> list[str]:
+        """Dates to ask the vendor for. Explicit ``trade_dates`` win over ``days_back``.
+
+        ``days_back`` walks calendar weekdays (holidays included); a holiday is then
+        answered with the previous session and stored under that session's date.
+        """
+        if trade_dates:
+            return list(trade_dates)
+        today = datetime.now(UTC).date()
+        if days_back is not None and days_back > 1:
+            return [
+                (today - timedelta(days=i)).isoformat()
+                for i in range(1, days_back + 1)
+                if (today - timedelta(days=i)).weekday() < 5
+            ]
+        return [(today - timedelta(days=1)).isoformat()]
+
+    @staticmethod
+    def _options_record(sym: str, row: Any, rep: HarvestReport) -> dict[str, Any] | None:
+        """Parse one HISTORICAL_OPTIONS row, or skip it (counted) when it cannot be stored honestly."""
+        if not isinstance(row, dict):
+            rep.skipped["options_malformed_row"] += 1
+            return None
+        row_date = row.get("date")
+        if not is_iso_date(row_date):
+            rep.skipped["options_missing_date"] += 1
+            return None
+        option_type = str(row.get("type") or "").strip().lower()
+        if option_type not in ("call", "put"):
+            rep.skipped["options_missing_type"] += 1
+            return None
+        contract_id = str(row.get("contractID") or "").strip()
+        if not contract_id:
+            rep.skipped["options_missing_contract_id"] += 1
+            return None
+        expiration = row.get("expiration")
+        if not is_iso_date(expiration):
+            rep.skipped["options_missing_expiration"] += 1
+            return None
+        try:
+            strike = _optional_float(row.get("strike"))
+            record = {
+                "contract_id": contract_id,
+                "symbol": sym,
+                "trade_date": row_date,
+                "expiration": expiration,
+                "strike": strike,
+                "option_type": option_type,
+                "last_price": _optional_float(row.get("last")),
+                "mark_price": _optional_float(row.get("mark")),
+                "bid": _optional_float(row.get("bid")),
+                "ask": _optional_float(row.get("ask")),
+                "volume": _optional_count(row.get("volume")),
+                "open_interest": _optional_count(row.get("open_interest")),
+                "implied_volatility": _optional_float(row.get("implied_volatility")),
+                "delta": _optional_float(row.get("delta")),
+                "gamma": _optional_float(row.get("gamma")),
+                "theta": _optional_float(row.get("theta")),
+                "vega": _optional_float(row.get("vega")),
+                "rho": _optional_float(row.get("rho")),
+            }
+        except ValueError:
+            rep.skipped["options_malformed_number"] += 1
+            return None
+        if strike is None or strike <= 0:
+            rep.skipped["options_missing_strike"] += 1
+            return None
+        return record
 
     async def download_historical_options(
         self,
@@ -203,46 +452,49 @@ class AlphaVantageWorker(BaseWorker):
         moneyness_band_pct: float | None = None,
         prune_inactive: bool = False,
         use_mock: bool = False,
+        report: HarvestReport | None = None,
     ) -> tuple[int, int]:
-        """Download end-of-day options chains and persist to options_chains_eod."""
+        """Download end-of-day options chains and persist to options_chains_eod.
+
+        Each row is stored under its own ``date``. When the vendor answers date D
+        with a different session D' (a holiday, a weekend, a date not yet settled),
+        the run records "asked D, got D'" in ``report.date_substitutions``.
+
+        ``moneyness_band_pct`` keeps strikes within +/-N% of that session's stored
+        close. When the close is unknown the band is NOT applied (the full chain is
+        stored) and the session is listed in ``report.spot_unknown``.
+
+        ``prune_inactive`` drops contracts whose reported volume AND open interest
+        are both 0. It never drops a row whose volume or open interest is unknown
+        (NULL). Pruning hides builds-from-zero: a contract dropped at 0 OI has no
+        stored baseline on the day its open interest starts to build.
+        """
+        rep = report if report is not None else HarvestReport()
         harvested = 0
         upserted = 0
-        if trade_dates:
-            target_dates = trade_dates
-        elif days_back is not None and days_back > 1:
-            today = datetime.now(UTC).date()
-            target_dates = [
-                (today - timedelta(days=i)).isoformat()
-                for i in range(1, days_back + 1)
-                if (today - timedelta(days=i)).weekday() < 5
-            ]
-        else:
-            target_dates = [(datetime.now(UTC).date() - timedelta(days=1)).isoformat()]
+        target_dates = self.resolve_target_dates(trade_dates, days_back)
+        band = moneyness_band_pct if moneyness_band_pct is not None and moneyness_band_pct > 0 else None
 
         for sym in symbols:
-            records = []
+            records: list[dict[str, Any]] = []
             if use_mock:
                 for dt in target_dates:
                     mock_spot = 455.0
-                    for strike in (300.0, 450.0, 455.0, 460.0, 600.0):
-                        if (
-                            moneyness_band_pct is not None
-                            and moneyness_band_pct > 0
-                            and abs(strike - mock_spot) / mock_spot > (moneyness_band_pct / 100.0)
-                        ):
+                    for mock_strike in (300.0, 450.0, 455.0, 460.0, 600.0):
+                        if band is not None and abs(mock_strike - mock_spot) / mock_spot > (band / 100.0):
                             continue
                         for otype in ("call", "put"):
-                            vol = 0 if strike == 600.0 else (10 if strike == 300.0 else 1200)
-                            oi = 0 if strike == 600.0 else (50 if strike == 300.0 else 4500)
+                            vol = 0 if mock_strike == 600.0 else (10 if mock_strike == 300.0 else 1200)
+                            oi = 0 if mock_strike == 600.0 else (50 if mock_strike == 300.0 else 4500)
                             if prune_inactive and vol == 0 and oi == 0:
                                 continue
-                            cid = f"{sym}_{dt}_{strike:.0f}_{otype.upper()}"
+                            cid = f"{sym}_{dt}_{mock_strike:.0f}_{otype.upper()}"
                             records.append({
                                 "contract_id": cid,
                                 "symbol": sym,
                                 "trade_date": dt,
                                 "expiration": (datetime.now(UTC).date() + timedelta(days=30)).isoformat(),
-                                "strike": strike,
+                                "strike": mock_strike,
                                 "option_type": otype,
                                 "last_price": 5.25,
                                 "mark_price": 5.20,
@@ -258,58 +510,53 @@ class AlphaVantageWorker(BaseWorker):
                                 "rho": 0.05,
                             })
             else:
+                spots: dict[str, float | None] = {}
                 for dt in target_dates:
                     try:
                         data = await self.client.fetch_json("HISTORICAL_OPTIONS", {"symbol": sym, "date": dt})
-                        chain = data.get("data", [])
-                        spot: float | None = None
-                        if moneyness_band_pct is not None and moneyness_band_pct > 0:
-                            spot = await db.get_stock_close(sym, dt)
-                            if spot is None and chain:
-                                strikes_list = [float(r.get("strike", 0)) for r in chain if float(r.get("strike", 0)) > 0]
-                                if strikes_list:
-                                    strikes_list.sort()
-                                    spot = strikes_list[len(strikes_list) // 2]
-
-                        for row in chain:
-                            vol = int(row.get("volume") or 0)
-                            oi = int(row.get("open_interest") or 0)
-                            if prune_inactive and vol == 0 and oi == 0:
-                                continue
-
-                            strike = float(row.get("strike", 0))
-                            if (
-                                moneyness_band_pct is not None
-                                and moneyness_band_pct > 0
-                                and spot is not None
-                                and spot > 0
-                                and abs(strike - spot) / spot > (moneyness_band_pct / 100.0)
-                            ):
-                                continue
-
-                            cid = row.get("contractID") or f"{sym}_{dt}_{row.get('strike')}_{row.get('type')}"
-                            records.append({
-                                "contract_id": cid,
-                                "symbol": sym,
-                                "trade_date": dt,
-                                "expiration": row.get("expiration"),
-                                "strike": strike,
-                                "option_type": str(row.get("type", "call")).lower(),
-                                "last_price": float(row["last"]) if row.get("last") is not None else None,
-                                "mark_price": float(row["mark"]) if row.get("mark") is not None else None,
-                                "bid": float(row["bid"]) if row.get("bid") is not None else None,
-                                "ask": float(row["ask"]) if row.get("ask") is not None else None,
-                                "volume": vol,
-                                "open_interest": oi,
-                                "implied_volatility": float(row["implied_volatility"]) if row.get("implied_volatility") is not None else None,
-                                "delta": float(row["delta"]) if row.get("delta") is not None else None,
-                                "gamma": float(row["gamma"]) if row.get("gamma") is not None else None,
-                                "theta": float(row["theta"]) if row.get("theta") is not None else None,
-                                "vega": float(row["vega"]) if row.get("vega") is not None else None,
-                                "rho": float(row["rho"]) if row.get("rho") is not None else None,
-                            })
                     except AlphaVantageError as exc:
                         logger.warning("Options chain fetch error for %s on %s: %s", sym, dt, exc)
+                        rep.fetch_errors.append(f"HISTORICAL_OPTIONS {sym} {dt}: status {exc.status} ({exc.label})")
+                        continue
+                    chain = data.get("data")
+                    if not isinstance(chain, list) or not chain:
+                        rep.empty_responses.append(f"{sym} {dt}")
+                        continue
+
+                    got_dates: set[str] = set()
+                    for row in chain:
+                        rec = self._options_record(sym, row, rep)
+                        if rec is None:
+                            continue
+                        row_date = rec["trade_date"]
+                        got_dates.add(row_date)
+
+                        vol = rec["volume"]
+                        oi = rec["open_interest"]
+                        if prune_inactive and vol is not None and oi is not None and vol == 0 and oi == 0:
+                            rep.filtered["options_pruned_inactive"] += 1
+                            continue
+
+                        if band is not None:
+                            if row_date not in spots:
+                                spots[row_date] = await db.get_stock_close(sym, row_date)
+                                if spots[row_date] is None:
+                                    rep.spot_unknown.append(f"{sym} {row_date}")
+                                    logger.warning(
+                                        "No stored close for %s on %s: moneyness band not applied, full chain kept",
+                                        sym,
+                                        row_date,
+                                    )
+                            spot = spots[row_date]
+                            if spot is not None and spot > 0 and abs(rec["strike"] - spot) / spot > (band / 100.0):
+                                rep.filtered["options_outside_band"] += 1
+                                continue
+
+                        records.append(rec)
+
+                    if got_dates and got_dates != {dt}:
+                        rep.date_substitutions.append({"symbol": sym, "asked": dt, "got": sorted(got_dates)})
+                        logger.warning("HISTORICAL_OPTIONS %s: asked %s, got %s", sym, dt, ", ".join(sorted(got_dates)))
 
             harvested += len(records)
             if records:
@@ -539,28 +786,81 @@ class AlphaVantageWorker(BaseWorker):
                 errors=[err_msg],
             )
 
+        run_settings = self.settings
+        if use_mock:
+            # Fabricated rows never share a file with real ones, and never reach PostgreSQL.
+            if not run_settings.is_sqlite:
+                err_msg = (
+                    "Mock runs never write to PostgreSQL. Omit --db-url (mock rows go to "
+                    f"{MOCK_SQLITE_PATH}) or pass a sqlite:/// file."
+                )
+                logger.error(err_msg)
+                return WorkerResult(
+                    worker=self.name,
+                    status="failed",
+                    duration_seconds=round(time.time() - start_time, 2),
+                    errors=[err_msg],
+                )
+            if not run_settings.database_url:
+                run_settings = run_settings.model_copy(update={"database_url": f"sqlite:///{MOCK_SQLITE_PATH}"})
+
+        report = HarvestReport()
         try:
-            async with DatabaseManager(self.settings) as db:
+            async with DatabaseManager(run_settings) as db:
                 await db.initialize_tables()
+                if use_mock:
+                    await db.mark_mock_written()
 
                 if selected_dataset in ("daily", "all"):
-                    h, u = await self.download_daily_bars(db, target_symbols, use_mock=use_mock)
+                    h, u = await self.download_daily_bars(
+                        db,
+                        target_symbols,
+                        outputsize=kwargs.get("outputsize") or "compact",
+                        use_mock=use_mock,
+                        report=report,
+                    )
                     harvested += h
                     upserted += u
 
                 if selected_dataset in ("intraday", "all"):
-                    h, u = await self.download_intraday_bars(db, target_symbols, use_mock=use_mock)
+                    h, u = await self.download_intraday_bars(
+                        db,
+                        target_symbols,
+                        interval=kwargs.get("interval") or "5min",
+                        months=kwargs.get("months"),
+                        use_mock=use_mock,
+                        extended_hours=bool(kwargs.get("extended_hours", True)),
+                        report=report,
+                    )
                     harvested += h
                     upserted += u
 
                 if selected_dataset in ("options", "all"):
+                    trade_dates = kwargs.get("trade_dates")
+                    if isinstance(trade_dates, str):
+                        trade_dates = parse_trade_dates(trade_dates)
+                    sessions_from = kwargs.get("sessions_from")
+                    days_back = kwargs.get("days_back")
+                    if trade_dates and sessions_from:
+                        raise ValueError("Pass --trade-dates or --sessions-from, not both.")
+                    if sessions_from:
+                        # Real sessions only: the dates the vendor reported daily bars for.
+                        trade_dates = await db.get_stored_sessions(sessions_from, limit=days_back)
+                        if not trade_dates:
+                            raise ValueError(
+                                f"No stored daily bars for {sessions_from.upper()}; "
+                                "harvest --dataset daily for it first."
+                            )
+                        days_back = None
                     h, u = await self.download_historical_options(
                         db,
                         target_symbols,
-                        days_back=kwargs.get("days_back"),
+                        trade_dates=trade_dates,
+                        days_back=days_back,
                         moneyness_band_pct=kwargs.get("moneyness_band_pct"),
                         prune_inactive=bool(kwargs.get("prune_inactive", False)),
                         use_mock=use_mock,
+                        report=report,
                     )
                     harvested += h
                     upserted += u
@@ -584,6 +884,8 @@ class AlphaVantageWorker(BaseWorker):
             logger.error("Alpha Vantage Harvester error: %s", exc, exc_info=True)
             errors.append(str(exc))
 
+        # A request we could not make is an error, not an empty answer.
+        errors.extend(report.fetch_errors)
         duration = round(time.time() - start_time, 2)
         status = "success" if not errors else ("partial" if upserted > 0 else "failed")
 
@@ -599,6 +901,7 @@ class AlphaVantageWorker(BaseWorker):
                 "symbols_count": len(target_symbols),
                 "mock": use_mock,
                 "pacer_stats": self.pacer.stats(),
+                "report": report.as_dict(),
             },
         )
 
@@ -618,5 +921,6 @@ class AlphaVantageWorker(BaseWorker):
             "database_connected": db_ok,
             "api_key_configured": bool(self.settings.alphavantage_api_key),
             "max_per_second": self.pacer.max_per_second,
+            "requests_per_minute": self.pacer.requests_per_minute,
             "pacer_stats": self.pacer.stats(),
         }

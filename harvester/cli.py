@@ -9,8 +9,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from harvester import __version__
-from harvester.config import get_settings
-from harvester.core.db import DatabaseManager
+from harvester.config import Settings, get_settings
+from harvester.core.db import MOCK_SQLITE_PATH, DatabaseManager, mark_sqlite_file_mock
 from harvester.core.http_client import resilient_http_client
 from harvester.orchestration.daemon import CrawlerDaemon
 from harvester.orchestration.scheduler import (
@@ -28,6 +28,47 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+def _resolve_settings(mock: bool, db_url: str | None) -> Settings:
+    """Settings for a command; a --mock run never writes into the file sync-pg pushes.
+
+    Without --db-url a mock run writes to greeksview_harvester.mock.db, whatever
+    DATABASE_URL says. An explicit sqlite:/// --db-url is honoured but stamped as
+    mock-written, so sync-pg refuses it. A PostgreSQL --db-url is refused.
+    """
+    settings = get_settings()
+    if db_url is not None:
+        settings.database_url = db_url
+    if not mock:
+        return settings
+    if db_url is None:
+        settings = settings.model_copy(update={"database_url": f"sqlite:///{MOCK_SQLITE_PATH}"})
+    elif not settings.is_sqlite:
+        console.print("[bold red]Error:[/bold red] --mock never writes to PostgreSQL. Omit --db-url or pass a sqlite:/// file.")
+        raise typer.Exit(code=1)
+    mark_sqlite_file_mock(DatabaseManager(settings=settings).sqlite_path)
+    return settings
+
+
+def _print_harvest_report(report: dict[str, Any]) -> None:
+    """Print what a run could not store, and why (Alpha Vantage worker)."""
+    lines: list[str] = []
+    for key in ("skipped", "filtered"):
+        counts = report.get(key) or {}
+        if counts:
+            detail = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+            lines.append(f"Rows {key}: {sum(counts.values())} ({detail})")
+    for sub in report.get("date_substitutions") or []:
+        lines.append(f"{sub['symbol']}: asked {sub['asked']}, got {', '.join(sub['got'])}")
+    for item in report.get("spot_unknown") or []:
+        lines.append(f"No stored close for {item}: moneyness band not applied, full chain kept")
+    for item in report.get("empty_responses") or []:
+        lines.append(f"Empty options chain for {item}")
+    if lines:
+        console.print("[bold yellow]Harvest report:[/bold yellow]")
+        for line in lines:
+            console.print(f"  [yellow]•[/yellow] {line}")
 
 
 @app.command()
@@ -63,19 +104,33 @@ def run_command(
     mock: Annotated[bool, typer.Option("--mock", help="Use synthetic mock/simulation data")] = False,
     year: Annotated[int | None, typer.Option("--year", "-y", help="Target calendar year")] = None,
     all_years: Annotated[bool, typer.Option("--all-years/--single-year", help="Sweep all historical years back to 2012 (default: True)")] = True,
-    days_back: Annotated[int | None, typer.Option("--days-back", help="Historical trading days back for CBOE or Alpha Vantage Options (default: 1 snapshot, or specify N days)")] = None,
+    days_back: Annotated[int | None, typer.Option("--days-back", help="Historical trading days back for CBOE or Alpha Vantage Options (default: 1 snapshot, or specify N days). With --sessions-from: the N most recent stored sessions")] = None,
     weeks_back: Annotated[int | None, typer.Option("--weeks-back", help="Historical weeks back for FINRA OTC (default: 52 for full year)")] = None,
-    moneyness_band: Annotated[float | None, typer.Option("--moneyness-band", help="Strike moneyness filter percentage around spot (e.g. 40 for +/-40% strike band)")] = None,
-    prune_inactive: Annotated[bool, typer.Option("--prune-inactive/--no-prune-inactive", help="Prune zero-volume and zero-open-interest options contracts (default: False)")] = False,
+    moneyness_band: Annotated[float | None, typer.Option("--moneyness-band", help="Strike moneyness filter percentage around the session's stored close (e.g. 40 for +/-40%). Not applied when that close is unknown")] = None,
+    prune_inactive: Annotated[bool, typer.Option("--prune-inactive/--no-prune-inactive", help="Drop options contracts whose reported volume AND open interest are both 0 (default: False). Rows with unknown volume/OI are never dropped. Pruning hides builds-from-zero: a dropped contract has no baseline row on the day its OI starts to build")] = False,
+    trade_dates: Annotated[str | None, typer.Option("--trade-dates", help="Alpha Vantage options: explicit sessions, comma-separated YYYY-MM-DD and/or @file with one date per line")] = None,
+    sessions_from: Annotated[str | None, typer.Option("--sessions-from", help="Alpha Vantage options: use the sessions stored in stock_bars_daily for this symbol (real sessions only)")] = None,
+    outputsize: Annotated[str | None, typer.Option("--outputsize", help="Alpha Vantage daily bars: compact (latest 100 sessions, default) or full (whole history, for backfills)")] = None,
+    interval: Annotated[str | None, typer.Option("--interval", help="Alpha Vantage intraday bar interval: 1min, 5min (default), 15min, 30min, 60min")] = None,
+    months: Annotated[str | None, typer.Option("--months", help="Alpha Vantage intraday: comma-separated YYYY-MM months, one request each (default: trailing 30 days)")] = None,
+    extended_hours: Annotated[bool, typer.Option("--extended-hours/--no-extended-hours", help="Alpha Vantage intraday: include pre- and post-market bars (default: include)")] = True,
     dataset: Annotated[str | None, typer.Option("--dataset", "-d", help="Dataset for Alpha Vantage (daily, intraday, options, fundamentals, actions, reference, all)")] = None,
     symbols: Annotated[str | None, typer.Option("--symbols", "-s", help="Comma-separated ticker symbols (e.g. SPY,QQQ,AAPL)")] = None,
     api_key: Annotated[str | None, typer.Option("--api-key", "-k", help="API key override (e.g. for Alpha Vantage)")] = None,
     db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
 ) -> None:
     """Execute a single background worker independently."""
-    settings = get_settings()
-    if db_url is not None:
-        settings.database_url = db_url
+    parsed_trade_dates: list[str] | None = None
+    if trade_dates is not None:
+        from harvester.workers.alphavantage.worker import parse_trade_dates
+
+        try:
+            parsed_trade_dates = parse_trade_dates(trade_dates)
+        except (ValueError, OSError) as e:
+            console.print(f"[bold red]Error:[/bold red] --trade-dates: {e}")
+            raise typer.Exit(code=1) from None
+
+    settings = _resolve_settings(mock, db_url)
     if api_key is not None:
         settings.alphavantage_api_key = api_key
 
@@ -118,6 +173,18 @@ def run_command(
                 kwargs["dataset"] = dataset
             if symbols is not None:
                 kwargs["symbols"] = symbols
+            if parsed_trade_dates is not None:
+                kwargs["trade_dates"] = parsed_trade_dates
+            if sessions_from is not None:
+                kwargs["sessions_from"] = sessions_from
+            if outputsize is not None:
+                kwargs["outputsize"] = outputsize
+            if interval is not None:
+                kwargs["interval"] = interval
+            if months is not None:
+                kwargs["months"] = [m.strip() for m in months.split(",") if m.strip()]
+            if not extended_hours:
+                kwargs["extended_hours"] = False
             res = await worker.run_once(**kwargs)
 
         status_style = "bold green" if res.is_success else "bold red"
@@ -132,6 +199,8 @@ def run_command(
         table.add_row("Errors Count", str(len(res.errors)))
 
         console.print(table)
+        if isinstance(res.metadata.get("report"), dict):
+            _print_harvest_report(res.metadata["report"])
         if res.errors:
             console.print("[bold red]Errors encountered during run:[/bold red]")
             for err in res.errors[:5]:
@@ -149,9 +218,7 @@ def run_all_command(
     db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
 ) -> None:
     """Execute all registered harvesting workers in sequence."""
-    settings = get_settings()
-    if db_url is not None:
-        settings.database_url = db_url
+    settings = _resolve_settings(mock, db_url)
 
     async def _run_all() -> None:
         results = []
@@ -308,9 +375,7 @@ def house(
     db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
 ) -> None:
     """Ingest, parse, and normalize House of Representatives Periodic Transaction Reports (PTRs)."""
-    settings = get_settings()
-    if db_url is not None:
-        settings.database_url = db_url
+    settings = _resolve_settings(mock, db_url)
 
     title = f"House Clerk Ingestion Pipeline — Year {year}"
     mode_str = "[yellow]DRY-RUN[/yellow]" if dry_run else "[green]LIVE[/green]"
@@ -365,9 +430,7 @@ def senate(
     db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
 ) -> None:
     """Ingest, parse, and normalize U.S. Senate Periodic Transaction Reports (eFD)."""
-    settings = get_settings()
-    if db_url is not None:
-        settings.database_url = db_url
+    settings = _resolve_settings(mock, db_url)
 
     title = f"Senate eFD Ingestion Pipeline — Year {year}"
     mode_str = "[yellow]DRY-RUN[/yellow]" if dry_run else "[green]LIVE[/green]"
@@ -434,9 +497,7 @@ def daemon(
     db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
 ) -> None:
     """Run autonomous background daemon with cron scheduling and Prometheus metrics."""
-    settings = get_settings()
-    if db_url is not None:
-        settings.database_url = db_url
+    settings = _resolve_settings(mock, db_url)
 
     title = "Autonomous Congressional Crawler Daemon"
     status_str = "[yellow]RUN-ONCE[/yellow]" if run_once else "[green]ACTIVE DAEMON[/green]"

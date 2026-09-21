@@ -11,7 +11,7 @@ GreeksView Harvester is the **authoritative single source of truth** for sourcin
 ### Storage & Persistence Model
 * **Local Storage (Tier 1)**: Embedded SQLite database (`greeksview_harvester.db`) optimized for high-throughput batch writes and zero-latency local analytical operations.
 * **Production Synchronization (Tier 2)**: Bidirectional upsert synchronization engine (`harvester/core/sync.py`) replicating normalized records to production PostgreSQL.
-* **Rate Pacing & Quota Governance**: Token-bucket rate pacers enforce strict provider quota ceilings (e.g., 30 requests/second and 1,200 requests/minute for Alpha Vantage) with automated burst detection regex and exponential cooldown backoffs.
+* **Rate Pacing & Quota Governance**: Token-bucket rate pacers enforce provider quota ceilings with automated burst detection regex and cooldown backoffs. The Alpha Vantage pacer enforces both a per-second spacing and a per-minute cap, read from `ALPHAVANTAGE_MAX_PER_SECOND` and `ALPHAVANTAGE_RPM`. The key is shared with the GreeksView product, whose worst case already uses most of the key's budget, so the defaults are 1/second and 9/minute. Set them so the harvester plus the product stays inside the key's budget.
 
 ---
 
@@ -63,14 +63,35 @@ The Alpha Vantage worker supports dataset slicing via the `--dataset` option:
 # 1. Daily Adjusted Stock Bars (20+ Years OHLCV, Cash Dividends, Splits)
 uv run harvester run alphavantage --dataset daily --symbols SPY,QQQ,AAPL,NVDA,MSFT
 
-# 2. Intraday Stock Bars (1-min and 5-min intervals)
-uv run harvester run alphavantage --dataset intraday --symbols SPY,QQQ --limit 100
+# Daily backfill: --outputsize full returns the whole history (compact = latest 100 sessions)
+uv run harvester run alphavantage --dataset daily --symbols SPY --outputsize full
+
+# 2. Intraday Stock Bars: one request per month, outputsize=full, adjusted=false (as-traded).
+#    Pre/post-market bars are kept by default (--no-extended-hours drops them).
+#    bar_timestamp is the vendor's US/Eastern wall-clock time; sync-pg writes it to
+#    PostgreSQL as the matching Eastern instant.
+uv run harvester run alphavantage --dataset intraday --symbols SPY --interval 1min --months 2026-05,2026-06
 
 # 3. Settled End-of-Day Options Chains
 uv run harvester run alphavantage --dataset options --symbols SPY,QQQ --days-back 30
 
+# Explicit sessions: a list and/or @file (one YYYY-MM-DD per line)
+uv run harvester run alphavantage --dataset options --symbols SPY --trade-dates 2026-07-01,2026-07-02
+uv run harvester run alphavantage --dataset options --symbols SPY --trade-dates @sessions.txt
+
+# Real sessions only: the dates stored in stock_bars_daily for SPY (the 30 most recent)
+uv run harvester run alphavantage --dataset options --symbols SPY,QQQ --sessions-from SPY --days-back 30
+
+# Each options row is stored under its own `date`. Alpha Vantage answers a holiday or
+# weekend with the previous session; the run summary prints "asked D, got D'".
+# Rows missing a date, type, contract ID, expiration or strike are skipped and counted.
+# Missing volume / open interest are stored as NULL, never 0.
+
 # High-Density Options Ingestion with Storage Optimizations (Saves 60%-75% Disk)
-# Filters strikes within +/-40% of spot and prunes dormant zero-volume & zero-OI contracts:
+# Keeps strikes within +/-40% of that session's stored close (not applied, and the full
+# chain kept, when the close is unknown), and drops contracts whose reported volume AND
+# open interest are both 0. Rows with unknown volume/OI are never dropped. Pruning hides
+# builds-from-zero: a dropped contract has no baseline row on the day its OI starts to build.
 uv run harvester run alphavantage --dataset options --symbols SPY,QQQ --days-back 252 --moneyness-band 40 --prune-inactive
 
 # Archive older options to compressed .csv.gz files and prune live database:
@@ -89,7 +110,9 @@ uv run harvester run alphavantage --dataset reference --symbols SPY,QQQ
 # 7. Complete Multi-Dataset Pass (All Data Families for Universe)
 uv run harvester run alphavantage --dataset all --symbols SPY
 
-# Offline Sandbox Mode (Uses synthetic mock fixtures without burning API quota)
+# Offline Sandbox Mode (Uses synthetic mock fixtures without burning API quota).
+# Mock rows go to greeksview_harvester.mock.db, never to the file sync-pg pushes;
+# --mock with a PostgreSQL --db-url is refused.
 uv run harvester run alphavantage --dataset all --mock
 ```
 
@@ -220,6 +243,8 @@ uv run harvester sync-pg \
   --days-back 90
 ```
 
+> **Mock data never syncs**: `sync-pg` refuses any SQLite file a `--mock` run has written to (the file carries a mock stamp in its SQLite header). Harvest real data into a fresh file.
+
 > **Storage Optimization Strategy**: Keep deep historical backfill data (e.g. 800 days) in local SQLite or compressed parquet/gzip archives while selectively synchronizing only recent active windows (e.g. `--days-back 90`) into production PostgreSQL to conserve cloud database storage and keep cluster queries fast.
 
 
@@ -232,7 +257,7 @@ uv run harvester sync-pg \
 * **Action**:
   1. The built-in `AlphaVantagePacer` automatically triggers a 2-second cooldown and absorbs burst warnings. No intervention is required.
   2. If throttling persists, verify that no other worker process or developer is concurrently using the same API key.
-  3. Verify settings: `ALPHAVANTAGE_MAX_PER_SECOND=30` and `ALPHAVANTAGE_RPM=1200`.
+  3. Verify settings: `ALPHAVANTAGE_MAX_PER_SECOND` and `ALPHAVANTAGE_RPM` (defaults 1 and 9). The key is shared with the product; never raise them to the licence ceiling (30/second, 1,200/minute).
 
 ### Problem 2: Congressional PDF OCR Parse Failures
 * **Symptom**: House PDF reports parse errors on scanned handwritten disclosures.

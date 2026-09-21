@@ -12,9 +12,14 @@ Exceeding the per-second limit triggers an HTTP 200 refusal containing:
    more evenly across a 1-minute window and query no more than 30 requests per second."
 
 This pacer spaces requests evenly across time slots (spacing_ms) with:
-  - Strict 30 req/sec pacing with guard window.
+  - A per-second ceiling enforced as even spacing, with a guard window.
+  - A per-minute ceiling enforced as a sliding 60-second window of grants.
   - Automatic detection of burst notices with 2000ms global cooldown pause.
   - Dual-queue anti-starvation scheduling: 3 reader slots per 1 background slot.
+
+The key is shared with the GreeksView product, so the harvester's defaults are
+deliberately tiny (see harvester/config.py). The licence ceilings above are the
+upper bound for validation only, never a target.
 """
 
 import asyncio
@@ -22,14 +27,21 @@ import logging
 import math
 import re
 import time
+from collections import deque
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 TRIAL_PER_SECOND = 10
 COMMERCIAL_PER_SECOND = 30
-DEFAULT_MAX_PER_SECOND = 30
+COMMERCIAL_PER_MINUTE = 1200
+# Conservative defaults: an invalid setting falls back to these, never to the
+# licence ceiling, because the product spends most of the key's budget.
+DEFAULT_MAX_PER_SECOND = 1
+DEFAULT_REQUESTS_PER_MINUTE = 9
 WINDOW_MS = 1000.0
+MINUTE_MS = 60000.0
 GUARD_MS = 8.0
 COOLDOWN_MS = 2000.0
 READERS_PER_BACKGROUND = 3
@@ -58,12 +70,19 @@ class _Waiter:
 
 
 class AlphaVantagePacer:
-    """Resilient Token-Bucket Pacer enforcing 30 req/sec Alpha Vantage commercial SLA."""
+    """Pacer enforcing a per-second spacing AND a per-minute cap on Alpha Vantage calls.
+
+    ``clock`` (milliseconds, monotonic) and ``sleep`` (seconds) are injectable so
+    tests can drive the pacer deterministically without real waits.
+    """
 
     def __init__(
         self,
         max_per_second: int = DEFAULT_MAX_PER_SECOND,
         cooldown_ms: float = COOLDOWN_MS,
+        requests_per_minute: int = DEFAULT_REQUESTS_PER_MINUTE,
+        clock: Callable[[], float] | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         if not (1 <= max_per_second <= COMMERCIAL_PER_SECOND):
             logger.warning(
@@ -72,11 +91,23 @@ class AlphaVantagePacer:
                 DEFAULT_MAX_PER_SECOND,
             )
             max_per_second = DEFAULT_MAX_PER_SECOND
+        if not (1 <= requests_per_minute <= COMMERCIAL_PER_MINUTE):
+            logger.warning(
+                "Invalid requests_per_minute=%s. Defaulting to %s",
+                requests_per_minute,
+                DEFAULT_REQUESTS_PER_MINUTE,
+            )
+            requests_per_minute = DEFAULT_REQUESTS_PER_MINUTE
 
         self.max_per_second = max_per_second
+        self.requests_per_minute = requests_per_minute
         self.cooldown_ms = float(cooldown_ms)
         self.spacing_ms = math.ceil((WINDOW_MS + GUARD_MS) / self.max_per_second)
+        self._clock = clock
+        self._sleep = sleep or asyncio.sleep
 
+        # Grant times (ms) inside the trailing 60s window, oldest first.
+        self._minute_grants: deque[float] = deque()
         self._next_at: float = 0.0
         self._cool_until: float = 0.0
         self._cool_started_at: float = 0.0
@@ -97,10 +128,20 @@ class AlphaVantagePacer:
         }
 
     def _now_ms(self) -> float:
+        if self._clock is not None:
+            return self._clock()
         return time.monotonic() * 1000.0
 
-    def _open_at(self) -> float:
-        return max(self._next_at, self._cool_until)
+    def _minute_open_at(self, now: float) -> float:
+        """Earliest time the per-minute window admits another grant."""
+        while self._minute_grants and now - self._minute_grants[0] >= MINUTE_MS:
+            self._minute_grants.popleft()
+        if len(self._minute_grants) < self.requests_per_minute:
+            return 0.0
+        return self._minute_grants[0] + MINUTE_MS + GUARD_MS
+
+    def _open_at(self, now: float) -> float:
+        return max(self._next_at, self._cool_until, self._minute_open_at(now))
 
     def _reader_slot(self, k: int, bg_waiting: int) -> int:
         extra = min(bg_waiting, math.floor((self._reader_run + k) / READERS_PER_BACKGROUND)) if bg_waiting else 0
@@ -140,7 +181,7 @@ class AlphaVantagePacer:
                     self._counts["unwanted"] += 1
                     continue
 
-                open_at = self._open_at()
+                open_at = self._open_at(now)
                 target_at = max(open_at, now)
 
                 if target_at > waiter.deadline_ms:
@@ -152,11 +193,12 @@ class AlphaVantagePacer:
 
                 if target_at > now:
                     wait_sec = (target_at - now) / 1000.0
-                    await asyncio.sleep(wait_sec)
+                    await self._sleep(wait_sec)
                     continue
 
                 q.pop(0)
                 self._next_at = now + self.spacing_ms
+                self._minute_grants.append(now)
                 self._counts["granted"] += 1
                 if bg_turn:
                     self._counts["background_granted"] += 1
@@ -193,7 +235,7 @@ class AlphaVantagePacer:
             if is_background
             else self._reader_slot(len(self._readers), len(self._background))
         )
-        projected_at = max(self._open_at(), now) + ahead * self.spacing_ms
+        projected_at = max(self._open_at(now), now) + ahead * self.spacing_ms
 
         if projected_at - now > max_wait_ms:
             self._counts["refused"] += 1
@@ -246,9 +288,12 @@ class AlphaVantagePacer:
 
     def stats(self) -> dict[str, Any]:
         """Return telemetry counters and queue status."""
+        self._minute_open_at(self._now_ms())  # drop grants older than the window
         return {
             **self._counts,
             "max_per_second": self.max_per_second,
+            "requests_per_minute": self.requests_per_minute,
+            "granted_last_minute": len(self._minute_grants),
             "spacing_ms": self.spacing_ms,
             "cooldown_ms": self.cooldown_ms,
             "queued_readers": len(self._readers),
