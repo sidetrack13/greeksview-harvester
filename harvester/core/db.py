@@ -4,9 +4,12 @@ import contextlib
 import csv
 import gzip
 import logging
+import sqlite3
 from datetime import UTC, date, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 import asyncpg
@@ -15,6 +18,61 @@ from harvester.config import Settings, get_settings
 from harvester.core.models import CongressionalFiling, CongressionalTransaction
 
 logger = logging.getLogger(__name__)
+
+# Mock/simulation runs write here by default, never into the file sync-pg pushes.
+MOCK_SQLITE_PATH = "greeksview_harvester.mock.db"
+# SQLite header field (PRAGMA application_id) stamped on any file a mock run
+# writes to. sync-pg refuses to push a file carrying it. 0x4D4F434B is "MOCK".
+MOCK_APPLICATION_ID = 0x4D4F434B
+
+# Alpha Vantage TIME_SERIES_INTRADAY timestamps are US/Eastern wall-clock times
+# ("6. Time Zone": "US/Eastern" in the payload's Meta Data).
+VENDOR_INTRADAY_TZ = "America/New_York"
+
+
+@lru_cache(maxsize=1)
+def _vendor_intraday_zone() -> ZoneInfo:
+    return ZoneInfo(VENDOR_INTRADAY_TZ)
+
+
+def as_vendor_eastern(ts: datetime) -> datetime:
+    """Attach US/Eastern to a naive vendor intraday timestamp; leave aware values alone.
+
+    asyncpg treats a naive datetime bound to TIMESTAMPTZ as UTC, which would shift a
+    09:31 ET bar to 09:31Z. ZoneInfo applies the DST offset of that date.
+    """
+    if ts.tzinfo is not None:
+        return ts
+    return ts.replace(tzinfo=_vendor_intraday_zone())
+
+
+def optional_int(value: Any) -> int | None:
+    """Return None for an unknown value; never substitute 0."""
+    if value is None:
+        return None
+    return int(value)
+
+
+def mark_sqlite_file_mock(path: str) -> None:
+    """Stamp a SQLite file as written by a mock run (creates the file if absent)."""
+    if not path or path == ":memory:":
+        return
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(f"PRAGMA application_id = {MOCK_APPLICATION_ID}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def sqlite_file_is_mock(path: str) -> bool:
+    """True when a mock run has written to this SQLite file."""
+    conn = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        row = conn.execute("PRAGMA application_id").fetchone()
+    finally:
+        conn.close()
+    return bool(row) and int(row[0]) == MOCK_APPLICATION_ID
 
 # Schema DDL matching GreeksView GV-96 specifications
 SQLITE_SCHEMA = """
@@ -211,8 +269,8 @@ CREATE TABLE IF NOT EXISTS options_chains_eod (
     mark_price REAL,
     bid REAL,
     ask REAL,
-    volume INTEGER DEFAULT 0,
-    open_interest INTEGER DEFAULT 0,
+    volume INTEGER,
+    open_interest INTEGER,
     implied_volatility REAL,
     delta REAL,
     gamma REAL,
@@ -473,8 +531,8 @@ CREATE TABLE IF NOT EXISTS options_chains_eod (
     mark_price NUMERIC(16,4),
     bid NUMERIC(16,4),
     ask NUMERIC(16,4),
-    volume BIGINT DEFAULT 0,
-    open_interest BIGINT DEFAULT 0,
+    volume BIGINT,
+    open_interest BIGINT,
     implied_volatility NUMERIC(12,6),
     delta NUMERIC(10,6),
     gamma NUMERIC(10,6),
@@ -1403,6 +1461,8 @@ class DatabaseManager:
                     if isinstance(b_ts, str):
                         with contextlib.suppress(Exception):
                             b_ts = datetime.fromisoformat(b_ts)
+                    if isinstance(b_ts, datetime):
+                        b_ts = as_vendor_eastern(b_ts)
                     await conn.execute(
                         query,
                         r["symbol"].upper(),
@@ -1458,8 +1518,8 @@ class DatabaseManager:
                         float(r["mark_price"]) if r.get("mark_price") is not None else None,
                         float(r["bid"]) if r.get("bid") is not None else None,
                         float(r["ask"]) if r.get("ask") is not None else None,
-                        int(r.get("volume", 0)),
-                        int(r.get("open_interest", 0)),
+                        optional_int(r.get("volume")),
+                        optional_int(r.get("open_interest")),
                         float(r["implied_volatility"]) if r.get("implied_volatility") is not None else None,
                         float(r["delta"]) if r.get("delta") is not None else None,
                         float(r["gamma"]) if r.get("gamma") is not None else None,
@@ -1518,8 +1578,8 @@ class DatabaseManager:
                         float(r["mark_price"]) if r.get("mark_price") is not None else None,
                         float(r["bid"]) if r.get("bid") is not None else None,
                         float(r["ask"]) if r.get("ask") is not None else None,
-                        int(r.get("volume", 0)),
-                        int(r.get("open_interest", 0)),
+                        optional_int(r.get("volume")),
+                        optional_int(r.get("open_interest")),
                         float(r["implied_volatility"]) if r.get("implied_volatility") is not None else None,
                         float(r["delta"]) if r.get("delta") is not None else None,
                         float(r["gamma"]) if r.get("gamma") is not None else None,
@@ -1821,6 +1881,42 @@ class DatabaseManager:
                     )
                     count += 1
         return count
+
+    async def get_stored_sessions(self, symbol: str, limit: int | None = None) -> list[str]:
+        """Return the trade dates stored in stock_bars_daily for a symbol, oldest first.
+
+        Daily bars exist only for sessions the vendor reported, so this is a list of
+        real sessions (no weekends, no holidays). ``limit`` keeps the most recent N.
+        """
+        sym = symbol.upper()
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            async with self._sqlite_conn.execute(
+                "SELECT DISTINCT trade_date FROM stock_bars_daily WHERE symbol = ? ORDER BY trade_date",
+                (sym,),
+            ) as cur:
+                dates = [str(r[0]) for r in await cur.fetchall()]
+        else:
+            assert self._pg_pool is not None
+            async with self._pg_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT DISTINCT trade_date FROM stock_bars_daily WHERE symbol = $1 ORDER BY trade_date",
+                    sym,
+                )
+                dates = [r[0].isoformat() if isinstance(r[0], date) else str(r[0]) for r in rows]
+        if limit is not None and limit > 0:
+            dates = dates[-limit:]
+        return dates
+
+    async def mark_mock_written(self) -> None:
+        """Stamp the open SQLite database as written by a mock run."""
+        if not self.settings.is_sqlite:
+            raise RuntimeError("Mock runs never write to PostgreSQL.")
+        if not self.is_connected:
+            await self.connect()
+        assert self._sqlite_conn is not None
+        await self._sqlite_conn.execute(f"PRAGMA application_id = {MOCK_APPLICATION_ID}")
+        await self._sqlite_conn.commit()
 
     async def get_stock_close(self, symbol: str, trade_date: str) -> float | None:
         """Retrieve closing stock price for a symbol on a specific trade date."""

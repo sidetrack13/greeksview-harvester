@@ -60,8 +60,14 @@ class Settings(BaseSettings):
     # Alpha Vantage Settings
     alphavantage_api_key: str = Field(default_factory=_load_sibling_alphavantage_key)
     alphavantage_base_url: str = "https://www.alphavantage.co/query"
-    alphavantage_max_per_second: int = 30
-    alphavantage_rpm: int = 1200
+    # Pacing. The Alpha Vantage key is SHARED with the GreeksView product, whose
+    # worst case already spends most of the key's per-minute and per-second
+    # budget. These defaults are deliberately tiny; the owner
+    # must set ALPHAVANTAGE_RPM / ALPHAVANTAGE_MAX_PER_SECOND so that the harvester
+    # plus the product's worst case stays inside the key's budget. Never raise them
+    # to the licence ceiling. The pacer enforces both limits (pacer.py).
+    alphavantage_max_per_second: int = 1
+    alphavantage_rpm: int = 9
     alphavantage_cooldown_ms: int = 2000
 
     # Simulation & Testing

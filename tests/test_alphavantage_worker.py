@@ -319,6 +319,7 @@ async def test_worker_real_flow_with_json_mocks(tmp_path):
                 "theta": "-0.05",
                 "vega": "0.14",
                 "rho": "0.06",
+                "date": "2024-06-14",
             }
         ]
     }

@@ -122,7 +122,7 @@ By default, **omitting the `--mock` flag runs the worker in `Mode: LIVE`**, issu
 
 ### Built-in Resilience & Fallback Logic
 1. **Market Holidays / Off-Hours**: If CBOE or FINRA has not yet published data for a specific date (e.g. weekend or holiday), the worker detects the non-200 or empty response and falls back to calibrated statistical distributions without crashing or blocking remaining tasks.
-2. **Offline Simulation Mode (`--mock`)**: Passing `--mock` runs the workers completely offline using deterministic test fixtures and calibrated financial generators, ideal for isolated testing, air-gapped sandboxes, and CI/CD pipelines.
+2. **Offline Simulation Mode (`--mock`)**: Passing `--mock` runs the workers completely offline using deterministic test fixtures and calibrated financial generators, ideal for isolated testing, air-gapped sandboxes, and CI/CD pipelines. Mock rows are written to `greeksview_harvester.mock.db` unless `--db-url` names another SQLite file; either way the file is stamped as mock-written and `sync-pg` refuses to push it. `--mock` with a PostgreSQL `--db-url` is refused.
 3. **Pacing & Rate Limits**: Live calls automatically adhere to upstream rate limits (e.g. SEC $\le 10$ req/s, download concurrency caps).
 
 ### 2. Standalone Python Module Execution
