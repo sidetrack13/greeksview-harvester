@@ -512,6 +512,168 @@ async def test_harvester_tables_sqlite(test_db: DatabaseManager) -> None:
     assert stats["cboe_options"] >= 1
 
 
+@pytest.mark.asyncio
+async def test_alphavantage_tables_sqlite(test_db: DatabaseManager) -> None:
+    """Test Alpha Vantage batch upsert methods with executemany in SQLite mode."""
+    await test_db.initialize_tables()
+
+    # 1. Stock Bars Daily
+    assert await test_db.upsert_stock_bars_daily([]) == 0
+    daily_records = [
+        {
+            "symbol": "AAPL",
+            "trade_date": "2026-09-18",
+            "open": 220.0,
+            "high": 225.0,
+            "low": 219.0,
+            "close": 224.5,
+            "adjusted_close": 224.5,
+            "volume": 50000000,
+            "dividend_amount": 0.0,
+            "split_coefficient": 1.0,
+        },
+        {"symbol": "AAPL", "trade_date": "invalid", "open": "bad"},  # Should be skipped safely
+    ]
+    assert await test_db.upsert_stock_bars_daily(daily_records) == 1
+    # Update on conflict
+    daily_records[0]["close"] = 226.0
+    assert await test_db.upsert_stock_bars_daily([daily_records[0]]) == 1
+    close_val = await test_db.get_stock_close("AAPL", "2026-09-18")
+    assert close_val == 226.0
+    assert await test_db.get_stored_sessions("AAPL") == ["2026-09-18"]
+
+    # 2. Stock Bars Intraday
+    assert await test_db.upsert_stock_bars_intraday([]) == 0
+    intraday_records = [
+        {
+            "symbol": "AAPL",
+            "bar_timestamp": "2026-09-18 09:35:00",
+            "interval": "5min",
+            "open": 220.5,
+            "high": 221.0,
+            "low": 220.0,
+            "close": 220.8,
+            "volume": 150000,
+        },
+        {"symbol": "AAPL", "bar_timestamp": "2026-09-18 09:40:00"},  # Missing fields skipped
+    ]
+    assert await test_db.upsert_stock_bars_intraday(intraday_records) == 1
+    intraday_records[0]["close"] = 221.5
+    assert await test_db.upsert_stock_bars_intraday([intraday_records[0]]) == 1
+
+    # 3. Options Chains EOD
+    assert await test_db.upsert_options_chains_eod([]) == 0
+    chain_records = [
+        {
+            "contract_id": "AAPL260925C00230000",
+            "symbol": "AAPL",
+            "trade_date": "2026-09-18",
+            "expiration": "2026-09-25",
+            "strike": 230.0,
+            "option_type": "call",
+            "last_price": 3.45,
+            "mark_price": 3.40,
+            "bid": 3.35,
+            "ask": 3.45,
+            "volume": 1200,
+            "open_interest": 4500,
+            "implied_volatility": 0.285,
+            "delta": 0.42,
+            "gamma": 0.05,
+            "theta": -0.08,
+            "vega": 0.12,
+            "rho": 0.02,
+        },
+        {"contract_id": "BAD"},  # Missing fields skipped
+    ]
+    assert await test_db.upsert_options_chains_eod(chain_records) == 1
+    chain_records[0]["last_price"] = 3.60
+    assert await test_db.upsert_options_chains_eod([chain_records[0]]) == 1
+
+    # 4. Company Fundamentals
+    assert await test_db.upsert_company_fundamentals([]) == 0
+    fund_records = [
+        {
+            "symbol": "AAPL",
+            "fiscal_date_ending": "2026-06-30",
+            "report_type": "INCOME_STATEMENT",
+            "period_type": "quarterly",
+            "data_json": '{"totalRevenue": 85000000000}',
+        },
+        {"symbol": "AAPL"},  # Missing fields skipped
+    ]
+    assert await test_db.upsert_company_fundamentals(fund_records) == 1
+    fund_records[0]["data_json"] = '{"totalRevenue": 86000000000}'
+    assert await test_db.upsert_company_fundamentals([fund_records[0]]) == 1
+
+    # 5. Corporate Dividends
+    assert await test_db.upsert_corporate_dividends([]) == 0
+    div_records = [
+        {
+            "symbol": "AAPL",
+            "ex_dividend_date": "2026-08-10",
+            "declaration_date": "2026-07-25",
+            "record_date": "2026-08-12",
+            "payment_date": "2026-08-15",
+            "amount": 0.25,
+        },
+        {"symbol": "AAPL"},  # Missing fields skipped
+    ]
+    assert await test_db.upsert_corporate_dividends(div_records) == 1
+    div_records[0]["amount"] = 0.26
+    assert await test_db.upsert_corporate_dividends([div_records[0]]) == 1
+
+    # 6. Corporate Splits
+    assert await test_db.upsert_corporate_splits([]) == 0
+    split_records = [
+        {
+            "symbol": "AAPL",
+            "effective_date": "2020-08-31",
+            "split_factor": 4.0,
+        },
+        {"symbol": "AAPL"},  # Missing fields skipped
+    ]
+    assert await test_db.upsert_corporate_splits(split_records) == 1
+    split_records[0]["split_factor"] = 4.0
+    assert await test_db.upsert_corporate_splits([split_records[0]]) == 1
+
+    # 7. ETF Profiles
+    assert await test_db.upsert_etf_profiles([]) == 0
+    etf_records = [
+        {
+            "symbol": "SPY",
+            "net_assets": 500000000000.0,
+            "portfolio_turnover": 0.02,
+            "dividend_yield": 0.013,
+            "expense_ratio": 0.0009,
+            "holdings_json": '[{"symbol": "AAPL", "weight": 0.07}]',
+            "sectors_json": '[{"sector": "Technology", "weight": 0.30}]',
+        },
+        {"symbol": "SPY", "net_assets": "invalid"},  # Skipped
+    ]
+    assert await test_db.upsert_etf_profiles(etf_records) == 1
+    etf_records[0]["net_assets"] = 510000000000.0
+    assert await test_db.upsert_etf_profiles([etf_records[0]]) == 1
+
+    # 8. Listing Status
+    assert await test_db.upsert_listing_status([]) == 0
+    listing_records = [
+        {
+            "symbol": "AAPL",
+            "name": "Apple Inc",
+            "exchange": "NASDAQ",
+            "asset_type": "Stock",
+            "ipo_date": "1980-12-12",
+            "delisting_date": None,
+            "status": "Active",
+        },
+        {"symbol": None},  # Missing/invalid symbol skipped
+    ]
+    assert await test_db.upsert_listing_status(listing_records) == 1
+    listing_records[0]["status"] = "Active"
+    assert await test_db.upsert_listing_status([listing_records[0]]) == 1
+
+
 def test_database_manager_path_resolution() -> None:
     """Verify DatabaseManager resolves sqlite_path from settings or defaults."""
     # 1. Explicit sqlite_path overrides everything
