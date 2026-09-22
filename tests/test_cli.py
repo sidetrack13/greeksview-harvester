@@ -203,4 +203,3 @@ def test_cli_run_all_with_dataset_and_symbols(tmp_path) -> None:
     assert result.exit_code == 0
     assert "Consolidated Harvesting Results" in result.stdout
     assert "alphavantage" in result.stdout
-

@@ -45,7 +45,9 @@ def _resolve_settings(mock: bool, db_url: str | None) -> Settings:
     if db_url is None:
         settings = settings.model_copy(update={"database_url": f"sqlite:///{MOCK_SQLITE_PATH}"})
     elif not settings.is_sqlite:
-        console.print("[bold red]Error:[/bold red] --mock never writes to PostgreSQL. Omit --db-url or pass a sqlite:/// file.")
+        console.print(
+            "[bold red]Error:[/bold red] --mock never writes to PostgreSQL. Omit --db-url or pass a sqlite:/// file."
+        )
         raise typer.Exit(code=1)
     mark_sqlite_file_mock(DatabaseManager(settings=settings).sqlite_path)
     return settings
@@ -99,24 +101,99 @@ def list_command() -> None:
 
 @app.command(name="run")
 def run_command(
-    worker_name: Annotated[str, typer.Argument(help="Name of worker (congressional, sec_edgar, finra_darkpool, cboe_options, fred_macro, alphavantage)")],
-    limit: Annotated[int | None, typer.Option("--limit", "-l", help="Record or symbol limit (default: None for max history)")] = None,
+    worker_name: Annotated[
+        str,
+        typer.Argument(
+            help="Name of worker (congressional, sec_edgar, finra_darkpool, cboe_options, fred_macro, alphavantage)"
+        ),
+    ],
+    limit: Annotated[
+        int | None, typer.Option("--limit", "-l", help="Record or symbol limit (default: None for max history)")
+    ] = None,
     mock: Annotated[bool, typer.Option("--mock", help="Use synthetic mock/simulation data")] = False,
     year: Annotated[int | None, typer.Option("--year", "-y", help="Target calendar year")] = None,
-    all_years: Annotated[bool, typer.Option("--all-years/--single-year", help="Sweep all historical years back to 2012 (default: True)")] = True,
-    days_back: Annotated[int | None, typer.Option("--days-back", help="Historical trading days back for CBOE or Alpha Vantage Options (default: 1 snapshot, or specify N days). With --sessions-from: the N most recent stored sessions")] = None,
-    weeks_back: Annotated[int | None, typer.Option("--weeks-back", help="Historical weeks back for FINRA OTC (default: 52 for full year)")] = None,
-    moneyness_band: Annotated[float | None, typer.Option("--moneyness-band", help="Strike moneyness filter percentage around the session's stored close (e.g. 40 for +/-40%). Not applied when that close is unknown")] = None,
-    prune_inactive: Annotated[bool, typer.Option("--prune-inactive/--no-prune-inactive", help="Drop options contracts whose reported volume AND open interest are both 0 (default: False). Rows with unknown volume/OI are never dropped. Pruning hides builds-from-zero: a dropped contract has no baseline row on the day its OI starts to build")] = False,
-    trade_dates: Annotated[str | None, typer.Option("--trade-dates", help="Alpha Vantage options: explicit sessions, comma-separated YYYY-MM-DD and/or @file with one date per line")] = None,
-    sessions_from: Annotated[str | None, typer.Option("--sessions-from", help="Alpha Vantage options: use the sessions stored in stock_bars_daily for this symbol (real sessions only)")] = None,
-    outputsize: Annotated[str | None, typer.Option("--outputsize", help="Alpha Vantage daily bars: compact (latest 100 sessions, default) or full (whole history, for backfills)")] = None,
-    interval: Annotated[str | None, typer.Option("--interval", help="Alpha Vantage intraday bar interval: 1min, 5min (default), 15min, 30min, 60min")] = None,
-    months: Annotated[str | None, typer.Option("--months", help="Alpha Vantage intraday: comma-separated YYYY-MM months, one request each (default: trailing 30 days)")] = None,
-    extended_hours: Annotated[bool, typer.Option("--extended-hours/--no-extended-hours", help="Alpha Vantage intraday: include pre- and post-market bars (default: include)")] = True,
-    dataset: Annotated[str | None, typer.Option("--dataset", "-d", help="Dataset for Alpha Vantage (daily, intraday, options, fundamentals, actions, reference, all)")] = None,
-    symbols: Annotated[str | None, typer.Option("--symbols", "-s", help="Comma-separated ticker symbols (e.g. SPY,QQQ,AAPL)")] = None,
-    api_key: Annotated[str | None, typer.Option("--api-key", "-k", help="API key override (e.g. for Alpha Vantage)")] = None,
+    all_years: Annotated[
+        bool, typer.Option("--all-years/--single-year", help="Sweep all historical years back to 2012 (default: True)")
+    ] = True,
+    days_back: Annotated[
+        int | None,
+        typer.Option(
+            "--days-back",
+            help="Historical trading days back for CBOE or Alpha Vantage Options (default: 1 snapshot, or specify N days). With --sessions-from: the N most recent stored sessions",
+        ),
+    ] = None,
+    weeks_back: Annotated[
+        int | None, typer.Option("--weeks-back", help="Historical weeks back for FINRA OTC (default: 52 for full year)")
+    ] = None,
+    moneyness_band: Annotated[
+        float | None,
+        typer.Option(
+            "--moneyness-band",
+            help="Strike moneyness filter percentage around the session's stored close (e.g. 40 for +/-40%). Not applied when that close is unknown",
+        ),
+    ] = None,
+    prune_inactive: Annotated[
+        bool,
+        typer.Option(
+            "--prune-inactive/--no-prune-inactive",
+            help="Drop options contracts whose reported volume AND open interest are both 0 (default: False). Rows with unknown volume/OI are never dropped. Pruning hides builds-from-zero: a dropped contract has no baseline row on the day its OI starts to build",
+        ),
+    ] = False,
+    trade_dates: Annotated[
+        str | None,
+        typer.Option(
+            "--trade-dates",
+            help="Alpha Vantage options: explicit sessions, comma-separated YYYY-MM-DD and/or @file with one date per line",
+        ),
+    ] = None,
+    sessions_from: Annotated[
+        str | None,
+        typer.Option(
+            "--sessions-from",
+            help="Alpha Vantage options: use the sessions stored in stock_bars_daily for this symbol (real sessions only)",
+        ),
+    ] = None,
+    outputsize: Annotated[
+        str | None,
+        typer.Option(
+            "--outputsize",
+            help="Alpha Vantage daily bars: compact (latest 100 sessions, default) or full (whole history, for backfills)",
+        ),
+    ] = None,
+    interval: Annotated[
+        str | None,
+        typer.Option(
+            "--interval", help="Alpha Vantage intraday bar interval: 1min, 5min (default), 15min, 30min, 60min"
+        ),
+    ] = None,
+    months: Annotated[
+        str | None,
+        typer.Option(
+            "--months",
+            help="Alpha Vantage intraday: comma-separated YYYY-MM months, one request each (default: trailing 30 days)",
+        ),
+    ] = None,
+    extended_hours: Annotated[
+        bool,
+        typer.Option(
+            "--extended-hours/--no-extended-hours",
+            help="Alpha Vantage intraday: include pre- and post-market bars (default: include)",
+        ),
+    ] = True,
+    dataset: Annotated[
+        str | None,
+        typer.Option(
+            "--dataset",
+            "-d",
+            help="Dataset for Alpha Vantage (daily, intraday, options, fundamentals, actions, reference, all)",
+        ),
+    ] = None,
+    symbols: Annotated[
+        str | None, typer.Option("--symbols", "-s", help="Comma-separated ticker symbols (e.g. SPY,QQQ,AAPL)")
+    ] = None,
+    api_key: Annotated[
+        str | None, typer.Option("--api-key", "-k", help="API key override (e.g. for Alpha Vantage)")
+    ] = None,
     db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
 ) -> None:
     """Execute a single background worker independently."""
@@ -211,10 +288,16 @@ def run_command(
 
 @app.command(name="run-all")
 def run_all_command(
-    limit: Annotated[int | None, typer.Option("--limit", "-l", help="Record limit per worker (default: None for max history)")] = None,
+    limit: Annotated[
+        int | None, typer.Option("--limit", "-l", help="Record limit per worker (default: None for max history)")
+    ] = None,
     mock: Annotated[bool, typer.Option("--mock", help="Use synthetic mock data")] = False,
-    dataset: Annotated[str | None, typer.Option("--dataset", "-d", help="Alpha Vantage dataset filter (daily, options, all, etc.)")] = None,
-    symbols: Annotated[str | None, typer.Option("--symbols", "-s", help="Comma-separated ticker symbols (e.g. SPY,QQQ)")] = None,
+    dataset: Annotated[
+        str | None, typer.Option("--dataset", "-d", help="Alpha Vantage dataset filter (daily, options, all, etc.)")
+    ] = None,
+    symbols: Annotated[
+        str | None, typer.Option("--symbols", "-s", help="Comma-separated ticker symbols (e.g. SPY,QQQ)")
+    ] = None,
     db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
 ) -> None:
     """Execute all registered harvesting workers in sequence."""
@@ -292,11 +375,20 @@ def health_command(
 
 @app.command(name="sync-pg")
 def sync_pg_command(
-    pg_url: Annotated[str | None, typer.Option("--pg-url", help="Target PostgreSQL connection string (defaults to DATABASE_URL)")] = None,
-    sqlite_path: Annotated[str, typer.Option("--sqlite-path", help="Source SQLite database file path")] = "greeksview_harvester.db",
+    pg_url: Annotated[
+        str | None, typer.Option("--pg-url", help="Target PostgreSQL connection string (defaults to DATABASE_URL)")
+    ] = None,
+    sqlite_path: Annotated[
+        str, typer.Option("--sqlite-path", help="Source SQLite database file path")
+    ] = "greeksview_harvester.db",
     batch_size: Annotated[int, typer.Option("--batch-size", "-b", help="Batch size for PostgreSQL inserts")] = 1000,
-    table: Annotated[list[str] | None, typer.Option("--table", "-t", help="Specific table(s) to sync (default: all)")] = None,
-    days_back: Annotated[int | None, typer.Option("--days-back", "-d", help="Historical trading days back to sync to PostgreSQL (default: all)")] = None,
+    table: Annotated[
+        list[str] | None, typer.Option("--table", "-t", help="Specific table(s) to sync (default: all)")
+    ] = None,
+    days_back: Annotated[
+        int | None,
+        typer.Option("--days-back", "-d", help="Historical trading days back to sync to PostgreSQL (default: all)"),
+    ] = None,
 ) -> None:
     """Synchronize all locally harvested SQLite tables into PostgreSQL."""
     settings = get_settings()
@@ -591,9 +683,18 @@ def stats(
 
 @app.command(name="archive-options")
 def archive_options_command(
-    days_to_keep: Annotated[int, typer.Option("--days-to-keep", "-k", help="Days of options data to keep in live database")] = 90,
-    output_dir: Annotated[str, typer.Option("--output-dir", "-o", help="Directory to store compressed .csv.gz archives")] = "./archives",
-    prune: Annotated[bool, typer.Option("--prune/--no-prune", help="Prune archived records from live database after export (default: True)")] = True,
+    days_to_keep: Annotated[
+        int, typer.Option("--days-to-keep", "-k", help="Days of options data to keep in live database")
+    ] = 90,
+    output_dir: Annotated[
+        str, typer.Option("--output-dir", "-o", help="Directory to store compressed .csv.gz archives")
+    ] = "./archives",
+    prune: Annotated[
+        bool,
+        typer.Option(
+            "--prune/--no-prune", help="Prune archived records from live database after export (default: True)"
+        ),
+    ] = True,
     symbol: Annotated[str | None, typer.Option("--symbol", "-s", help="Filter by ticker symbol (e.g. SPY)")] = None,
     db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
 ) -> None:

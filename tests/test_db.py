@@ -296,7 +296,7 @@ async def test_postgres_mode_mocked() -> None:
             )
             == 1
         )
-        assert mock_conn.execute.call_args[0][2] == date(2026, 9, 10)
+        assert mock_conn.executemany.call_args[0][1][0][1] == date(2026, 9, 10)
         assert await db.upsert_stock_bars_daily([]) == 0
         assert await db.upsert_stock_bars_daily([{"symbol": "NVDA", "trade_date": "invalid"}]) == 0
 
@@ -317,8 +317,8 @@ async def test_postgres_mode_mocked() -> None:
             )
             == 1
         )
-        assert mock_conn.execute.call_args[0][3] == date(2026, 9, 10)
-        assert mock_conn.execute.call_args[0][4] == date(2026, 9, 18)
+        assert mock_conn.executemany.call_args[0][1][0][2] == date(2026, 9, 10)
+        assert mock_conn.executemany.call_args[0][1][0][3] == date(2026, 9, 18)
         assert await db.upsert_options_chains_eod([]) == 0
         assert (
             await db.upsert_options_chains_eod(
@@ -334,8 +334,8 @@ async def test_postgres_mode_mocked() -> None:
             )
             == 1
         )
-        assert mock_conn.execute.call_args[0][2] == date(2026, 9, 10)
-        assert mock_conn.execute.call_args[0][3] == date(2026, 8, 20)
+        assert mock_conn.executemany.call_args[0][1][0][1] == date(2026, 9, 10)
+        assert mock_conn.executemany.call_args[0][1][0][2] == date(2026, 8, 20)
         assert await db.upsert_corporate_dividends([]) == 0
         assert (
             await db.upsert_corporate_dividends([{"symbol": "NVDA", "ex_dividend_date": "invalid", "amount": 0.04}])
@@ -347,7 +347,7 @@ async def test_postgres_mode_mocked() -> None:
             await db.upsert_corporate_splits([{"symbol": "NVDA", "effective_date": "2026-09-10", "split_factor": 10.0}])
             == 1
         )
-        assert mock_conn.execute.call_args[0][2] == date(2026, 9, 10)
+        assert mock_conn.executemany.call_args[0][1][0][1] == date(2026, 9, 10)
         assert await db.upsert_corporate_splits([]) == 0
         assert (
             await db.upsert_corporate_splits([{"symbol": "NVDA", "effective_date": "invalid", "split_factor": 10.0}])
@@ -361,8 +361,8 @@ async def test_postgres_mode_mocked() -> None:
             )
             == 1
         )
-        assert mock_conn.execute.call_args[0][5] == date(1999, 1, 22)
-        assert mock_conn.execute.call_args[0][6] == date(2030, 1, 1)
+        assert mock_conn.executemany.call_args[0][1][0][4] == date(1999, 1, 22)
+        assert mock_conn.executemany.call_args[0][1][0][5] == date(2030, 1, 1)
         assert await db.upsert_listing_status([]) == 0
 
         # execute, fetch, fetchval in Postgres mode

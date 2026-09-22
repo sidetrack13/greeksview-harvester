@@ -192,7 +192,20 @@ class AlphaVantageWorker(BaseWorker):
         if symbols is None:
             res = list(DEFAULT_UNIVERSE)
         elif isinstance(symbols, str):
-            res = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+            res = []
+            for part in symbols.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                if part.startswith("@"):
+                    file_path = Path(part[1:].strip())
+                    if file_path.is_file():
+                        for line in file_path.read_text().splitlines():
+                            line = line.split("#", 1)[0].strip()
+                            if line:
+                                res.append(line.upper())
+                        continue
+                res.append(part.upper())
         else:
             res = [s.strip().upper() for s in symbols if s.strip()]
         if limit is not None and limit > 0:
@@ -249,23 +262,30 @@ class AlphaVantageWorker(BaseWorker):
                 today = datetime.now(UTC).date()
                 for d in range(10):
                     t_date = (today - timedelta(days=d)).isoformat()
-                    records.append({
-                        "symbol": sym,
-                        "trade_date": t_date,
-                        "open": 450.0 + d,
-                        "high": 455.0 + d,
-                        "low": 448.0 + d,
-                        "close": 452.0 + d,
-                        "adjusted_close": 452.0 + d,
-                        "volume": 50000000 + d * 100000,
-                        "dividend_amount": 0.0,
-                        "split_coefficient": 1.0,
-                    })
+                    records.append(
+                        {
+                            "symbol": sym,
+                            "trade_date": t_date,
+                            "open": 450.0 + d,
+                            "high": 455.0 + d,
+                            "low": 448.0 + d,
+                            "close": 452.0 + d,
+                            "adjusted_close": 452.0 + d,
+                            "volume": 50000000 + d * 100000,
+                            "dividend_amount": 0.0,
+                            "split_coefficient": 1.0,
+                        }
+                    )
             else:
-                data = await self.client.fetch_json(
-                    "TIME_SERIES_DAILY_ADJUSTED",
-                    {"symbol": sym, "outputsize": outputsize},
-                )
+                try:
+                    data = await self.client.fetch_json(
+                        "TIME_SERIES_DAILY_ADJUSTED",
+                        {"symbol": sym, "outputsize": outputsize},
+                    )
+                except AlphaVantageError as exc:
+                    logger.warning("Daily bars fetch error for %s: %s", sym, exc)
+                    rep.fetch_errors.append(f"TIME_SERIES_DAILY_ADJUSTED {sym}: status {exc.status} ({exc.label})")
+                    continue
                 ts = data.get("Time Series (Daily)")
                 if not isinstance(ts, dict):
                     rep.fetch_errors.append(f"TIME_SERIES_DAILY_ADJUSTED {sym}: response had no 'Time Series (Daily)'")
@@ -321,16 +341,18 @@ class AlphaVantageWorker(BaseWorker):
                 now = datetime.now(UTC)
                 for m in range(12):
                     ts_str = (now - timedelta(minutes=m * 5)).strftime("%Y-%m-%d %H:%M:%S")
-                    records.append({
-                        "symbol": sym,
-                        "bar_timestamp": ts_str,
-                        "interval": interval,
-                        "open": 450.0 + m * 0.1,
-                        "high": 450.5 + m * 0.1,
-                        "low": 449.8 + m * 0.1,
-                        "close": 450.2 + m * 0.1,
-                        "volume": 25000 + m * 100,
-                    })
+                    records.append(
+                        {
+                            "symbol": sym,
+                            "bar_timestamp": ts_str,
+                            "interval": interval,
+                            "open": 450.0 + m * 0.1,
+                            "high": 450.5 + m * 0.1,
+                            "low": 449.8 + m * 0.1,
+                            "close": 450.2 + m * 0.1,
+                            "volume": 25000 + m * 100,
+                        }
+                    )
                 harvested += len(records)
                 if records:
                     upserted += await db.upsert_stock_bars_intraday(records)
@@ -489,26 +511,28 @@ class AlphaVantageWorker(BaseWorker):
                             if prune_inactive and vol == 0 and oi == 0:
                                 continue
                             cid = f"{sym}_{dt}_{mock_strike:.0f}_{otype.upper()}"
-                            records.append({
-                                "contract_id": cid,
-                                "symbol": sym,
-                                "trade_date": dt,
-                                "expiration": (datetime.now(UTC).date() + timedelta(days=30)).isoformat(),
-                                "strike": mock_strike,
-                                "option_type": otype,
-                                "last_price": 5.25,
-                                "mark_price": 5.20,
-                                "bid": 5.15,
-                                "ask": 5.25,
-                                "volume": vol,
-                                "open_interest": oi,
-                                "implied_volatility": 0.185,
-                                "delta": 0.52 if otype == "call" else -0.48,
-                                "gamma": 0.035,
-                                "theta": -0.045,
-                                "vega": 0.12,
-                                "rho": 0.05,
-                            })
+                            records.append(
+                                {
+                                    "contract_id": cid,
+                                    "symbol": sym,
+                                    "trade_date": dt,
+                                    "expiration": (datetime.now(UTC).date() + timedelta(days=30)).isoformat(),
+                                    "strike": mock_strike,
+                                    "option_type": otype,
+                                    "last_price": 5.25,
+                                    "mark_price": 5.20,
+                                    "bid": 5.15,
+                                    "ask": 5.25,
+                                    "volume": vol,
+                                    "open_interest": oi,
+                                    "implied_volatility": 0.185,
+                                    "delta": 0.52 if otype == "call" else -0.48,
+                                    "gamma": 0.035,
+                                    "theta": -0.045,
+                                    "vega": 0.12,
+                                    "rho": 0.05,
+                                }
+                            )
             else:
                 spots: dict[str, float | None] = {}
                 for dt in target_dates:
@@ -579,13 +603,15 @@ class AlphaVantageWorker(BaseWorker):
             records = []
             if use_mock:
                 for rt in report_types:
-                    records.append({
-                        "symbol": sym,
-                        "fiscal_date_ending": "2024-06-30",
-                        "report_type": rt,
-                        "period_type": "annual",
-                        "data_json": json.dumps({"Symbol": sym, "FiscalYear": 2024, "Metric": "Mock"}),
-                    })
+                    records.append(
+                        {
+                            "symbol": sym,
+                            "fiscal_date_ending": "2024-06-30",
+                            "report_type": rt,
+                            "period_type": "annual",
+                            "data_json": json.dumps({"Symbol": sym, "FiscalYear": 2024, "Metric": "Mock"}),
+                        }
+                    )
             else:
                 for rt in report_types:
                     try:
@@ -593,13 +619,15 @@ class AlphaVantageWorker(BaseWorker):
                         if not data:
                             continue
                         fiscal_date = data.get("FiscalDateEnding") or data.get("LatestQuarter") or "LATEST"
-                        records.append({
-                            "symbol": sym,
-                            "fiscal_date_ending": fiscal_date,
-                            "report_type": rt,
-                            "period_type": "annual",
-                            "data_json": json.dumps(data),
-                        })
+                        records.append(
+                            {
+                                "symbol": sym,
+                                "fiscal_date_ending": fiscal_date,
+                                "report_type": rt,
+                                "period_type": "annual",
+                                "data_json": json.dumps(data),
+                            }
+                        )
                     except AlphaVantageError as exc:
                         logger.warning("Fundamentals %s fetch error for %s: %s", rt, sym, exc)
 
@@ -623,32 +651,38 @@ class AlphaVantageWorker(BaseWorker):
             div_records = []
             split_records = []
             if use_mock:
-                div_records.append({
-                    "symbol": sym,
-                    "ex_dividend_date": "2024-03-15",
-                    "declaration_date": "2024-02-15",
-                    "record_date": "2024-03-18",
-                    "payment_date": "2024-03-29",
-                    "amount": 1.78,
-                })
-                split_records.append({
-                    "symbol": sym,
-                    "effective_date": "2024-06-10",
-                    "split_factor": 10.0,
-                })
+                div_records.append(
+                    {
+                        "symbol": sym,
+                        "ex_dividend_date": "2024-03-15",
+                        "declaration_date": "2024-02-15",
+                        "record_date": "2024-03-18",
+                        "payment_date": "2024-03-29",
+                        "amount": 1.78,
+                    }
+                )
+                split_records.append(
+                    {
+                        "symbol": sym,
+                        "effective_date": "2024-06-10",
+                        "split_factor": 10.0,
+                    }
+                )
             else:
                 try:
                     div_data = await self.client.fetch_json("DIVIDENDS", {"symbol": sym})
                     for item in div_data.get("data", []):
                         if item.get("ex_dividend_date") and item.get("amount"):
-                            div_records.append({
-                                "symbol": sym,
-                                "ex_dividend_date": item["ex_dividend_date"],
-                                "declaration_date": item.get("declaration_date"),
-                                "record_date": item.get("record_date"),
-                                "payment_date": item.get("payment_date"),
-                                "amount": float(item["amount"]),
-                            })
+                            div_records.append(
+                                {
+                                    "symbol": sym,
+                                    "ex_dividend_date": item["ex_dividend_date"],
+                                    "declaration_date": item.get("declaration_date"),
+                                    "record_date": item.get("record_date"),
+                                    "payment_date": item.get("payment_date"),
+                                    "amount": float(item["amount"]),
+                                }
+                            )
                 except AlphaVantageError as exc:
                     logger.warning("Dividends fetch error for %s: %s", sym, exc)
 
@@ -656,11 +690,13 @@ class AlphaVantageWorker(BaseWorker):
                     split_data = await self.client.fetch_json("SPLITS", {"symbol": sym})
                     for item in split_data.get("data", []):
                         if item.get("effective_date") and item.get("split_factor"):
-                            split_records.append({
-                                "symbol": sym,
-                                "effective_date": item["effective_date"],
-                                "split_factor": float(item["split_factor"]),
-                            })
+                            split_records.append(
+                                {
+                                    "symbol": sym,
+                                    "effective_date": item["effective_date"],
+                                    "split_factor": float(item["split_factor"]),
+                                }
+                            )
                 except AlphaVantageError as exc:
                     logger.warning("Splits fetch error for %s: %s", sym, exc)
 
@@ -686,38 +722,44 @@ class AlphaVantageWorker(BaseWorker):
         etf_records = []
 
         if use_mock:
-            listing_records.append({
-                "symbol": "SPY",
-                "name": "SPDR S&P 500 ETF Trust",
-                "exchange": "NYSE ARCA",
-                "asset_type": "ETF",
-                "ipo_date": "1993-01-22",
-                "delisting_date": None,
-                "status": "Active",
-            })
-            etf_records.append({
-                "symbol": "SPY",
-                "net_assets": 550000000000.0,
-                "portfolio_turnover": 0.02,
-                "dividend_yield": 0.0125,
-                "expense_ratio": 0.0009,
-                "holdings_json": json.dumps([{"symbol": "MSFT", "weight": 0.07}]),
-                "sectors_json": json.dumps([{"sector": "Technology", "weight": 0.32}]),
-            })
+            listing_records.append(
+                {
+                    "symbol": "SPY",
+                    "name": "SPDR S&P 500 ETF Trust",
+                    "exchange": "NYSE ARCA",
+                    "asset_type": "ETF",
+                    "ipo_date": "1993-01-22",
+                    "delisting_date": None,
+                    "status": "Active",
+                }
+            )
+            etf_records.append(
+                {
+                    "symbol": "SPY",
+                    "net_assets": 550000000000.0,
+                    "portfolio_turnover": 0.02,
+                    "dividend_yield": 0.0125,
+                    "expense_ratio": 0.0009,
+                    "holdings_json": json.dumps([{"symbol": "MSFT", "weight": 0.07}]),
+                    "sectors_json": json.dumps([{"sector": "Technology", "weight": 0.32}]),
+                }
+            )
         else:
             try:
                 listings = await self.client.fetch_csv("LISTING_STATUS")
                 for row in listings:
                     if row.get("symbol"):
-                        listing_records.append({
-                            "symbol": row["symbol"].strip().upper(),
-                            "name": row.get("name"),
-                            "exchange": row.get("exchange"),
-                            "asset_type": row.get("assetType"),
-                            "ipo_date": row.get("ipoDate") if row.get("ipoDate") else None,
-                            "delisting_date": row.get("delistingDate") if row.get("delistingDate") else None,
-                            "status": row.get("status", "Active"),
-                        })
+                        listing_records.append(
+                            {
+                                "symbol": row["symbol"].strip().upper(),
+                                "name": row.get("name"),
+                                "exchange": row.get("exchange"),
+                                "asset_type": row.get("assetType"),
+                                "ipo_date": row.get("ipoDate") if row.get("ipoDate") else None,
+                                "delisting_date": row.get("delistingDate") if row.get("delistingDate") else None,
+                                "status": row.get("status", "Active"),
+                            }
+                        )
             except AlphaVantageError as exc:
                 logger.warning("Listing status CSV fetch error: %s", exc)
 
@@ -726,15 +768,17 @@ class AlphaVantageWorker(BaseWorker):
                 try:
                     data = await self.client.fetch_json("ETF_PROFILE", {"symbol": etf_sym})
                     if data and "net_assets" in data:
-                        etf_records.append({
-                            "symbol": etf_sym,
-                            "net_assets": float(data.get("net_assets") or 0),
-                            "portfolio_turnover": float(data.get("portfolio_turnover") or 0),
-                            "dividend_yield": float(data.get("dividend_yield") or 0),
-                            "expense_ratio": float(data.get("expense_ratio") or 0),
-                            "holdings_json": json.dumps(data.get("holdings", [])),
-                            "sectors_json": json.dumps(data.get("sectors", [])),
-                        })
+                        etf_records.append(
+                            {
+                                "symbol": etf_sym,
+                                "net_assets": float(data.get("net_assets") or 0),
+                                "portfolio_turnover": float(data.get("portfolio_turnover") or 0),
+                                "dividend_yield": float(data.get("dividend_yield") or 0),
+                                "expense_ratio": float(data.get("expense_ratio") or 0),
+                                "holdings_json": json.dumps(data.get("holdings", [])),
+                                "sectors_json": json.dumps(data.get("sectors", [])),
+                            }
+                        )
                 except AlphaVantageError as exc:
                     logger.warning("ETF profile fetch error for %s: %s", etf_sym, exc)
 

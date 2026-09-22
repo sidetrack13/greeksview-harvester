@@ -714,6 +714,10 @@ class DatabaseManager:
 
             async def _init_connection(conn: Any) -> None:
                 await conn.execute(f'SET search_path = "{schema}", public;')
+                try:
+                    await conn.execute("SET default_transaction_read_only = off;")
+                except Exception as exc:
+                    logger.debug("Could not override default_transaction_read_only: %s", exc)
 
             self._pg_pool = await asyncpg.create_pool(
                 self.settings.database_url,
@@ -1437,13 +1441,13 @@ class DatabaseManager:
                 split_coefficient = EXCLUDED.split_coefficient,
                 updated_at = NOW()
             """
-            async with self._pg_pool.acquire() as conn:
-                for r in records:
-                    t_date = to_pg_date(r.get("trade_date"))
-                    if t_date is None:
-                        continue
-                    await conn.execute(
-                        query,
+            batch = []
+            for r in records:
+                t_date = to_pg_date(r.get("trade_date"))
+                if t_date is None:
+                    continue
+                batch.append(
+                    (
                         r["symbol"].upper(),
                         t_date,
                         float(r["open"]),
@@ -1455,7 +1459,11 @@ class DatabaseManager:
                         float(r.get("dividend_amount", 0.0)),
                         float(r.get("split_coefficient", 1.0)),
                     )
-                    count += 1
+                )
+            if batch:
+                async with self._pg_pool.acquire() as conn:
+                    await conn.executemany(query, batch)
+                count = len(batch)
         return count
 
     async def upsert_stock_bars_intraday(self, records: list[dict[str, Any]]) -> int:
@@ -1506,16 +1514,16 @@ class DatabaseManager:
                 close = EXCLUDED.close,
                 volume = EXCLUDED.volume
             """
-            async with self._pg_pool.acquire() as conn:
-                for r in records:
-                    b_ts = r["bar_timestamp"]
-                    if isinstance(b_ts, str):
-                        with contextlib.suppress(Exception):
-                            b_ts = datetime.fromisoformat(b_ts)
-                    if isinstance(b_ts, datetime):
-                        b_ts = as_vendor_eastern(b_ts)
-                    await conn.execute(
-                        query,
+            batch = []
+            for r in records:
+                b_ts = r["bar_timestamp"]
+                if isinstance(b_ts, str):
+                    with contextlib.suppress(Exception):
+                        b_ts = datetime.fromisoformat(b_ts)
+                if isinstance(b_ts, datetime):
+                    b_ts = as_vendor_eastern(b_ts)
+                batch.append(
+                    (
                         r["symbol"].upper(),
                         b_ts,
                         r["interval"],
@@ -1525,7 +1533,11 @@ class DatabaseManager:
                         float(r["close"]),
                         int(r["volume"]),
                     )
-                    count += 1
+                )
+            if batch:
+                async with self._pg_pool.acquire() as conn:
+                    await conn.executemany(query, batch)
+                count = len(batch)
         return count
 
     async def upsert_options_chains_eod(self, records: list[dict[str, Any]]) -> int:
@@ -1607,14 +1619,14 @@ class DatabaseManager:
                 vega = EXCLUDED.vega,
                 rho = EXCLUDED.rho
             """
-            async with self._pg_pool.acquire() as conn:
-                for r in records:
-                    t_date = to_pg_date(r.get("trade_date"))
-                    exp_date = to_pg_date(r.get("expiration"))
-                    if t_date is None or exp_date is None:
-                        continue
-                    await conn.execute(
-                        query,
+            batch = []
+            for r in records:
+                t_date = to_pg_date(r.get("trade_date"))
+                exp_date = to_pg_date(r.get("expiration"))
+                if t_date is None or exp_date is None:
+                    continue
+                batch.append(
+                    (
                         r["contract_id"],
                         r["symbol"].upper(),
                         t_date,
@@ -1634,7 +1646,11 @@ class DatabaseManager:
                         float(r["vega"]) if r.get("vega") is not None else None,
                         float(r["rho"]) if r.get("rho") is not None else None,
                     )
-                    count += 1
+                )
+            if batch:
+                async with self._pg_pool.acquire() as conn:
+                    await conn.executemany(query, batch)
+                count = len(batch)
         return count
 
     async def upsert_company_fundamentals(self, records: list[dict[str, Any]]) -> int:
@@ -1678,17 +1694,21 @@ class DatabaseManager:
                 data_json = EXCLUDED.data_json,
                 updated_at = NOW()
             """
-            async with self._pg_pool.acquire() as conn:
-                for r in records:
-                    await conn.execute(
-                        query,
+            batch = []
+            for r in records:
+                batch.append(
+                    (
                         r["symbol"].upper(),
                         str(r["fiscal_date_ending"]),
                         r["report_type"].upper(),
                         r.get("period_type", "annual").lower(),
                         r["data_json"],
                     )
-                    count += 1
+                )
+            if batch:
+                async with self._pg_pool.acquire() as conn:
+                    await conn.executemany(query, batch)
+                count = len(batch)
         return count
 
     async def upsert_corporate_dividends(self, records: list[dict[str, Any]]) -> int:
@@ -1735,16 +1755,16 @@ class DatabaseManager:
                 payment_date = EXCLUDED.payment_date,
                 amount = EXCLUDED.amount
             """
-            async with self._pg_pool.acquire() as conn:
-                for r in records:
-                    ex_date = to_pg_date(r.get("ex_dividend_date"))
-                    if ex_date is None:
-                        continue
-                    dec_date = to_pg_date(r.get("declaration_date"))
-                    rec_date = to_pg_date(r.get("record_date"))
-                    pay_date = to_pg_date(r.get("payment_date"))
-                    await conn.execute(
-                        query,
+            batch = []
+            for r in records:
+                ex_date = to_pg_date(r.get("ex_dividend_date"))
+                if ex_date is None:
+                    continue
+                dec_date = to_pg_date(r.get("declaration_date"))
+                rec_date = to_pg_date(r.get("record_date"))
+                pay_date = to_pg_date(r.get("payment_date"))
+                batch.append(
+                    (
                         r["symbol"].upper(),
                         ex_date,
                         dec_date,
@@ -1752,7 +1772,11 @@ class DatabaseManager:
                         pay_date,
                         float(r["amount"]),
                     )
-                    count += 1
+                )
+            if batch:
+                async with self._pg_pool.acquire() as conn:
+                    await conn.executemany(query, batch)
+                count = len(batch)
         return count
 
     async def upsert_corporate_splits(self, records: list[dict[str, Any]]) -> int:
@@ -1790,18 +1814,22 @@ class DatabaseManager:
             ON CONFLICT (symbol, effective_date) DO UPDATE SET
                 split_factor = EXCLUDED.split_factor
             """
-            async with self._pg_pool.acquire() as conn:
-                for r in records:
-                    eff_date = to_pg_date(r.get("effective_date"))
-                    if eff_date is None:
-                        continue
-                    await conn.execute(
-                        query,
+            batch = []
+            for r in records:
+                eff_date = to_pg_date(r.get("effective_date"))
+                if eff_date is None:
+                    continue
+                batch.append(
+                    (
                         r["symbol"].upper(),
                         eff_date,
                         float(r["split_factor"]),
                     )
-                    count += 1
+                )
+            if batch:
+                async with self._pg_pool.acquire() as conn:
+                    await conn.executemany(query, batch)
+                count = len(batch)
         return count
 
     async def upsert_etf_profiles(self, records: list[dict[str, Any]]) -> int:
@@ -1857,10 +1885,10 @@ class DatabaseManager:
                 sectors_json = EXCLUDED.sectors_json,
                 updated_at = NOW()
             """
-            async with self._pg_pool.acquire() as conn:
-                for r in records:
-                    await conn.execute(
-                        query,
+            batch = []
+            for r in records:
+                batch.append(
+                    (
                         r["symbol"].upper(),
                         float(r["net_assets"]) if r.get("net_assets") is not None else None,
                         float(r["portfolio_turnover"]) if r.get("portfolio_turnover") is not None else None,
@@ -1869,7 +1897,11 @@ class DatabaseManager:
                         r.get("holdings_json", "[]"),
                         r.get("sectors_json", "[]"),
                     )
-                    count += 1
+                )
+            if batch:
+                async with self._pg_pool.acquire() as conn:
+                    await conn.executemany(query, batch)
+                count = len(batch)
         return count
 
     async def upsert_listing_status(self, records: list[dict[str, Any]]) -> int:
@@ -1923,12 +1955,12 @@ class DatabaseManager:
                 status = EXCLUDED.status,
                 updated_at = NOW()
             """
-            async with self._pg_pool.acquire() as conn:
-                for r in records:
-                    ipo_date = to_pg_date(r.get("ipo_date"))
-                    delist_date = to_pg_date(r.get("delisting_date"))
-                    await conn.execute(
-                        query,
+            batch = []
+            for r in records:
+                ipo_date = to_pg_date(r.get("ipo_date"))
+                delist_date = to_pg_date(r.get("delisting_date"))
+                batch.append(
+                    (
                         r["symbol"].upper(),
                         r.get("name"),
                         r.get("exchange"),
@@ -1937,7 +1969,11 @@ class DatabaseManager:
                         delist_date,
                         r.get("status", "Active"),
                     )
-                    count += 1
+                )
+            if batch:
+                async with self._pg_pool.acquire() as conn:
+                    await conn.executemany(query, batch)
+                count = len(batch)
         return count
 
     async def get_stored_sessions(self, symbol: str, limit: int | None = None) -> list[str]:

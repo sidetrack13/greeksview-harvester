@@ -160,10 +160,17 @@ class AlphaVantageClient:
             except (httpx.RequestError, TimeoutError) as exc:
                 if transients < MAX_TRANSIENT_RETRIES:
                     transients += 1
-                    logger.warning("Network error querying Alpha Vantage %s. Retrying (%s/%s)...", function, transients, MAX_TRANSIENT_RETRIES)
+                    logger.warning(
+                        "Network error querying Alpha Vantage %s. Retrying (%s/%s)...",
+                        function,
+                        transients,
+                        MAX_TRANSIENT_RETRIES,
+                    )
                     continue
                 clean_err = scrub(str(exc), self.api_key)
-                raise AlphaVantageError(f"Alpha Vantage request failed: {clean_err}", status=502, label="network_error") from exc
+                raise AlphaVantageError(
+                    f"Alpha Vantage request failed: {clean_err}", status=502, label="network_error"
+                ) from exc
 
             # 2. Check HTTP status code
             if response.status_code == 429:
@@ -255,7 +262,9 @@ class AlphaVantageClient:
                     transients += 1
                     continue
                 clean_err = scrub(str(exc), self.api_key)
-                raise AlphaVantageError(f"Alpha Vantage CSV request failed: {clean_err}", status=502, label="network_error") from exc
+                raise AlphaVantageError(
+                    f"Alpha Vantage CSV request failed: {clean_err}", status=502, label="network_error"
+                ) from exc
 
             if response.status_code == 429:
                 if throttles < MAX_THROTTLE_RETRIES:
@@ -279,4 +288,6 @@ class AlphaVantageClient:
                 if transients < MAX_TRANSIENT_RETRIES:
                     transients += 1
                     continue
-                raise AlphaVantageError(f"Alpha Vantage CSV parsing error: {exc}", status=502, label="unparseable") from exc
+                raise AlphaVantageError(
+                    f"Alpha Vantage CSV parsing error: {exc}", status=502, label="unparseable"
+                ) from exc

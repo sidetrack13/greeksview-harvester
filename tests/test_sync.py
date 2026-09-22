@@ -55,6 +55,7 @@ def test_parse_datetime():
 def test_sync_sqlite_to_postgres_missing_file():
     """Test FileNotFoundError when source SQLite file does not exist."""
     import asyncio
+
     with pytest.raises(FileNotFoundError):
         asyncio.run(sync_sqlite_to_postgres("postgresql://localhost:5432/test", sqlite_path="non_existent_db.sqlite"))
 
@@ -77,8 +78,16 @@ async def test_sync_sqlite_to_postgres_execution(tmp_path):
     cur.execute(
         "INSERT INTO congressional_filings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            'FILING_H1', 'house', 'Jane Doe', 'D001', 2024, '2024-05-15',
-            'http://url', 'text\x00with\x00nulls', 'hash1', 'parsed',
+            "FILING_H1",
+            "house",
+            "Jane Doe",
+            "D001",
+            2024,
+            "2024-05-15",
+            "http://url",
+            "text\x00with\x00nulls",
+            "hash1",
+            "parsed",
         ),
     )
 
@@ -93,8 +102,23 @@ async def test_sync_sqlite_to_postgres_execution(tmp_path):
     cur.execute(
         "INSERT INTO congressional_transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            'FILING_H1', 'Jane Doe', 'house', 'Democrat', 'CA', '12', 'NVDA', 'NVIDIA\x00Corp\x00',
-            'stock', 'BUY', '$1,001 - $15,000', 1001.0, 15000.0, '2024-05-10', '2024-05-15', 'self', 'test\x00',
+            "FILING_H1",
+            "Jane Doe",
+            "house",
+            "Democrat",
+            "CA",
+            "12",
+            "NVDA",
+            "NVIDIA\x00Corp\x00",
+            "stock",
+            "BUY",
+            "$1,001 - $15,000",
+            1001.0,
+            15000.0,
+            "2024-05-10",
+            "2024-05-15",
+            "self",
+            "test\x00",
         ),
     )
 
@@ -104,7 +128,9 @@ async def test_sync_sqlite_to_postgres_execution(tmp_path):
         value REAL, frequency TEXT, units TEXT
     )
     """)
-    cur.execute("INSERT INTO macro_indicators VALUES ('FEDFUNDS_2024-05-15', 'FEDFUNDS', 'Fed Funds', '2024-05-15', 5.33, 'daily', 'Percent')")
+    cur.execute(
+        "INSERT INTO macro_indicators VALUES ('FEDFUNDS_2024-05-15', 'FEDFUNDS', 'Fed Funds', '2024-05-15', 5.33, 'daily', 'Percent')"
+    )
 
     cur.execute("""
     CREATE TABLE cboe_daily_options (
@@ -112,7 +138,9 @@ async def test_sync_sqlite_to_postgres_execution(tmp_path):
         total_volume REAL, equity_pc_ratio REAL, index_pc_ratio REAL, total_pc_ratio REAL, vix_volume REAL
     )
     """)
-    cur.execute("INSERT INTO cboe_daily_options VALUES ('cboe_2024-05-15', '2024-05-15', 1000, 800, 1800, 0.65, 1.2, 0.8, 500)")
+    cur.execute(
+        "INSERT INTO cboe_daily_options VALUES ('cboe_2024-05-15', '2024-05-15', 1000, 800, 1800, 0.65, 1.2, 0.8, 500)"
+    )
 
     cur.execute("""
     CREATE TABLE finra_otc_volume (
@@ -120,7 +148,9 @@ async def test_sync_sqlite_to_postgres_execution(tmp_path):
         otc_volume REAL, total_trades REAL, total_market_volume REAL, dark_pool_share_pct REAL
     )
     """)
-    cur.execute("INSERT INTO finra_otc_volume VALUES ('finra_1', 'AAPL', '2024-05-13', 'Tier 1', 50000, 1200, 100000, 50.0)")
+    cur.execute(
+        "INSERT INTO finra_otc_volume VALUES ('finra_1', 'AAPL', '2024-05-13', 'Tier 1', 50000, 1200, 100000, 50.0)"
+    )
 
     cur.execute("""
     CREATE TABLE insider_trades (
@@ -130,7 +160,9 @@ async def test_sync_sqlite_to_postgres_execution(tmp_path):
         shares_owned_following REAL, sec_form TEXT, filing_url TEXT
     )
     """)
-    cur.execute("INSERT INTO insider_trades VALUES ('it_1', 'MSFT', '2024-05-15', '2024-05-14', 'Satya', 'CEO', 1, 1, 0, 'P', 100, 420.0, 5000, '4', 'url')")
+    cur.execute(
+        "INSERT INTO insider_trades VALUES ('it_1', 'MSFT', '2024-05-15', '2024-05-14', 'Satya', 'CEO', 1, 1, 0, 'P', 100, 420.0, 5000, '4', 'url')"
+    )
 
     cur.execute("""
     CREATE TABLE institutional_holdings (
@@ -139,7 +171,9 @@ async def test_sync_sqlite_to_postgres_execution(tmp_path):
         voting_authority_sole REAL, sec_form TEXT, filing_url TEXT
     )
     """)
-    cur.execute("INSERT INTO institutional_holdings VALUES ('ih_1', '0001', 'Berkshire', '2024-03-31', 'AAPL', '037833100', 900000, 150000000.0, 'SOLE', 900000, '13F-HR', 'url')")
+    cur.execute(
+        "INSERT INTO institutional_holdings VALUES ('ih_1', '0001', 'Berkshire', '2024-03-31', 'AAPL', '037833100', 900000, 150000000.0, 'SOLE', 900000, '13F-HR', 'url')"
+    )
 
     conn.commit()
     conn.close()
@@ -203,11 +237,16 @@ def test_cli_sync_pg_success(tmp_path):
             "macro_indicators": {"sqlite_count": 100, "synced_count": 100, "duration_seconds": 0.25},
         }
 
-        res = runner.invoke(app, [
-            "sync-pg",
-            "--pg-url", "postgresql://user:secret@localhost:5432/greeksview",
-            "--sqlite-path", fake_db,
-        ])
+        res = runner.invoke(
+            app,
+            [
+                "sync-pg",
+                "--pg-url",
+                "postgresql://user:secret@localhost:5432/greeksview",
+                "--sqlite-path",
+                fake_db,
+            ],
+        )
         assert res.exit_code == 0
         assert "Synchronization Results Summary" in res.stdout
         assert "congressional_filings" in res.stdout
@@ -225,13 +264,20 @@ def test_cli_sync_pg_table_filter_and_batch_size(tmp_path):
             "congressional_filings": {"sqlite_count": 5, "synced_count": 5, "duration_seconds": 0.05},
         }
 
-        res = runner.invoke(app, [
-            "sync-pg",
-            "--pg-url", "postgresql://user:pass@localhost:5432/test",
-            "--sqlite-path", fake_db,
-            "--table", "congressional_filings",
-            "--batch-size", "500",
-        ])
+        res = runner.invoke(
+            app,
+            [
+                "sync-pg",
+                "--pg-url",
+                "postgresql://user:pass@localhost:5432/test",
+                "--sqlite-path",
+                fake_db,
+                "--table",
+                "congressional_filings",
+                "--batch-size",
+                "500",
+            ],
+        )
         assert res.exit_code == 0
         assert "congressional_filings" in res.stdout
         mock_sync.assert_called_once()
@@ -249,11 +295,16 @@ def test_cli_sync_pg_failure(tmp_path):
     with patch("harvester.core.sync.sync_sqlite_to_postgres", new_callable=AsyncMock) as mock_sync:
         mock_sync.side_effect = RuntimeError("PostgreSQL connection refused")
 
-        res = runner.invoke(app, [
-            "sync-pg",
-            "--pg-url", "postgresql://user:pass@localhost:5432/test",
-            "--sqlite-path", fake_db,
-        ])
+        res = runner.invoke(
+            app,
+            [
+                "sync-pg",
+                "--pg-url",
+                "postgresql://user:pass@localhost:5432/test",
+                "--sqlite-path",
+                fake_db,
+            ],
+        )
         assert res.exit_code == 1
         assert "Sync Failed:" in res.stdout
 
@@ -281,7 +332,9 @@ async def test_sync_sqlite_to_postgres_filters_and_invalid_rows(tmp_path):
         value REAL, frequency TEXT, units TEXT
     )
     """)
-    cur.execute("INSERT INTO macro_indicators VALUES ('FEDFUNDS_bad', 'FEDFUNDS', 'Fed Funds', 'bad-date', 5.0, 'daily', 'Percent')")
+    cur.execute(
+        "INSERT INTO macro_indicators VALUES ('FEDFUNDS_bad', 'FEDFUNDS', 'Fed Funds', 'bad-date', 5.0, 'daily', 'Percent')"
+    )
 
     cur.execute("""
     CREATE TABLE congressional_transactions (
@@ -304,7 +357,9 @@ async def test_sync_sqlite_to_postgres_filters_and_invalid_rows(tmp_path):
         voting_authority_sole REAL, sec_form TEXT, filing_url TEXT
     )
     """)
-    cur.execute("INSERT INTO institutional_holdings VALUES ('ih_bad', '0001', 'Fund', 'invalid-qtr', 'AAPL', '037833100', NULL, NULL, 'SOLE', NULL, '13F-HR', 'url')")
+    cur.execute(
+        "INSERT INTO institutional_holdings VALUES ('ih_bad', '0001', 'Fund', 'invalid-qtr', 'AAPL', '037833100', NULL, NULL, 'SOLE', NULL, '13F-HR', 'url')"
+    )
 
     cur.execute("""
     CREATE TABLE insider_trades (
@@ -314,7 +369,9 @@ async def test_sync_sqlite_to_postgres_filters_and_invalid_rows(tmp_path):
         shares_owned_following REAL, sec_form TEXT, filing_url TEXT
     )
     """)
-    cur.execute("INSERT INTO insider_trades VALUES ('it_bad', 'MSFT', 'invalid-date', NULL, 'Satya', 'CEO', 0, 0, 0, 'P', NULL, NULL, NULL, '4', 'url')")
+    cur.execute(
+        "INSERT INTO insider_trades VALUES ('it_bad', 'MSFT', 'invalid-date', NULL, 'Satya', 'CEO', 0, 0, 0, 'P', NULL, NULL, NULL, '4', 'url')"
+    )
 
     cur.execute("""
     CREATE TABLE cboe_daily_options (
@@ -322,7 +379,9 @@ async def test_sync_sqlite_to_postgres_filters_and_invalid_rows(tmp_path):
         total_volume REAL, equity_pc_ratio REAL, index_pc_ratio REAL, total_pc_ratio REAL, vix_volume REAL
     )
     """)
-    cur.execute("INSERT INTO cboe_daily_options VALUES ('cboe_bad', 'invalid-date', NULL, NULL, NULL, NULL, NULL, NULL, NULL)")
+    cur.execute(
+        "INSERT INTO cboe_daily_options VALUES ('cboe_bad', 'invalid-date', NULL, NULL, NULL, NULL, NULL, NULL, NULL)"
+    )
 
     cur.execute("""
     CREATE TABLE finra_otc_volume (
@@ -330,7 +389,9 @@ async def test_sync_sqlite_to_postgres_filters_and_invalid_rows(tmp_path):
         otc_volume REAL, total_trades REAL, total_market_volume REAL, dark_pool_share_pct REAL
     )
     """)
-    cur.execute("INSERT INTO finra_otc_volume VALUES ('finra_bad', 'AAPL', 'invalid-date', 'Tier 1', NULL, NULL, NULL, NULL)")
+    cur.execute(
+        "INSERT INTO finra_otc_volume VALUES ('finra_bad', 'AAPL', 'invalid-date', 'Tier 1', NULL, NULL, NULL, NULL)"
+    )
 
     conn.commit()
     conn.close()
@@ -390,17 +451,24 @@ async def test_sync_alphavantage_tables(tmp_path):
         adjusted_close REAL, volume INTEGER, dividend_amount REAL, split_coefficient REAL
     )
     """)
-    cur.execute("INSERT INTO stock_bars_daily VALUES ('SPY', '2024-06-14', 450.0, 455.0, 448.0, 452.0, 452.0, 50000000, 0.0, 1.0)")
-    cur.execute("INSERT INTO stock_bars_daily VALUES ('SPY', 'bad-date', 450.0, 455.0, 448.0, 452.0, 452.0, 50000000, 0.0, 1.0)")
+    cur.execute(
+        "INSERT INTO stock_bars_daily VALUES ('SPY', '2024-06-14', 450.0, 455.0, 448.0, 452.0, 452.0, 50000000, 0.0, 1.0)"
+    )
+    cur.execute(
+        "INSERT INTO stock_bars_daily VALUES ('SPY', 'bad-date', 450.0, 455.0, 448.0, 452.0, 452.0, 50000000, 0.0, 1.0)"
+    )
 
     cur.execute("""
     CREATE TABLE stock_bars_intraday (
         symbol TEXT, bar_timestamp TEXT, interval TEXT, open REAL, high REAL, low REAL, close REAL, volume INTEGER
     )
     """)
-    cur.execute("INSERT INTO stock_bars_intraday VALUES ('SPY', '2024-06-14 16:00:00', '5min', 450.0, 451.0, 449.5, 450.5, 15000)")
-    cur.execute("INSERT INTO stock_bars_intraday VALUES ('SPY', 'bad-timestamp', '5min', 450.0, 451.0, 449.5, 450.5, 15000)")
-
+    cur.execute(
+        "INSERT INTO stock_bars_intraday VALUES ('SPY', '2024-06-14 16:00:00', '5min', 450.0, 451.0, 449.5, 450.5, 15000)"
+    )
+    cur.execute(
+        "INSERT INTO stock_bars_intraday VALUES ('SPY', 'bad-timestamp', '5min', 450.0, 451.0, 449.5, 450.5, 15000)"
+    )
 
     cur.execute("""
     CREATE TABLE options_chains_eod (
@@ -409,22 +477,30 @@ async def test_sync_alphavantage_tables(tmp_path):
         implied_volatility REAL, delta REAL, gamma REAL, theta REAL, vega REAL, rho REAL
     )
     """)
-    cur.execute("INSERT INTO options_chains_eod VALUES ('C1', 'SPY', '2024-06-14', '2024-07-19', 450.0, 'call', 5.0, 5.0, 4.9, 5.1, 100, 500, 0.18, 0.5, 0.03, -0.04, 0.12, 0.05)")
-    cur.execute("INSERT INTO options_chains_eod VALUES ('C2', 'SPY', 'bad-date', 'bad-date', 450.0, 'call', 5.0, 5.0, 4.9, 5.1, 100, 500, 0.18, 0.5, 0.03, -0.04, 0.12, 0.05)")
+    cur.execute(
+        "INSERT INTO options_chains_eod VALUES ('C1', 'SPY', '2024-06-14', '2024-07-19', 450.0, 'call', 5.0, 5.0, 4.9, 5.1, 100, 500, 0.18, 0.5, 0.03, -0.04, 0.12, 0.05)"
+    )
+    cur.execute(
+        "INSERT INTO options_chains_eod VALUES ('C2', 'SPY', 'bad-date', 'bad-date', 450.0, 'call', 5.0, 5.0, 4.9, 5.1, 100, 500, 0.18, 0.5, 0.03, -0.04, 0.12, 0.05)"
+    )
 
     cur.execute("""
     CREATE TABLE company_fundamentals (
         symbol TEXT, fiscal_date_ending TEXT, report_type TEXT, period_type TEXT, data_json TEXT
     )
     """)
-    cur.execute("INSERT INTO company_fundamentals VALUES ('AAPL', '2024-03-31', 'OVERVIEW', 'annual', '{\"Symbol\":\"AAPL\"}')")
+    cur.execute(
+        "INSERT INTO company_fundamentals VALUES ('AAPL', '2024-03-31', 'OVERVIEW', 'annual', '{\"Symbol\":\"AAPL\"}')"
+    )
 
     cur.execute("""
     CREATE TABLE corporate_dividends (
         symbol TEXT, ex_dividend_date TEXT, declaration_date TEXT, record_date TEXT, payment_date TEXT, amount REAL
     )
     """)
-    cur.execute("INSERT INTO corporate_dividends VALUES ('AAPL', '2024-05-10', '2024-05-01', '2024-05-13', '2024-05-16', 0.25)")
+    cur.execute(
+        "INSERT INTO corporate_dividends VALUES ('AAPL', '2024-05-10', '2024-05-01', '2024-05-13', '2024-05-16', 0.25)"
+    )
     cur.execute("INSERT INTO corporate_dividends VALUES ('AAPL', 'bad-date', NULL, NULL, NULL, 0.25)")
 
     cur.execute("""
@@ -447,7 +523,9 @@ async def test_sync_alphavantage_tables(tmp_path):
         symbol TEXT, name TEXT, exchange TEXT, asset_type TEXT, ipo_date TEXT, delisting_date TEXT, status TEXT
     )
     """)
-    cur.execute("INSERT INTO listing_status VALUES ('SPY', 'SPDR S&P 500', 'NYSE', 'ETF', '1993-01-22', NULL, 'Active')")
+    cur.execute(
+        "INSERT INTO listing_status VALUES ('SPY', 'SPDR S&P 500', 'NYSE', 'ETF', '1993-01-22', NULL, 'Active')"
+    )
 
     conn.commit()
     conn.close()
@@ -459,6 +537,7 @@ async def test_sync_alphavantage_tables(tmp_path):
     class MockPoolCtx:
         async def __aenter__(self):
             return mock_pg_conn
+
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
@@ -494,11 +573,12 @@ async def test_sync_alphavantage_tables(tmp_path):
         assert summary["listing_status"]["synced_count"] == 1
 
         # Verify stock_bars_intraday passes a real datetime.datetime instance (not str)
-        intraday_call = next(c.args[1] for c in mock_pg_conn.executemany.call_args_list if "stock_bars_intraday" in c.args[0])
+        intraday_call = next(
+            c.args[1] for c in mock_pg_conn.executemany.call_args_list if "stock_bars_intraday" in c.args[0]
+        )
         assert len(intraday_call) == 1
         assert isinstance(intraday_call[0][1], datetime)
         assert not isinstance(intraday_call[0][1], str)
-
 
 
 @pytest.mark.asyncio
@@ -518,8 +598,14 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
         adjusted_close REAL, volume INTEGER, dividend_amount REAL, split_coefficient REAL
     )
     """)
-    cur.execute("INSERT INTO stock_bars_daily VALUES ('SPY', ?, 450.0, 455.0, 448.0, 452.0, 452.0, 50000000, 0.0, 1.0)", (recent_date,))
-    cur.execute("INSERT INTO stock_bars_daily VALUES ('SPY', ?, 400.0, 405.0, 398.0, 402.0, 402.0, 40000000, 0.0, 1.0)", (old_date,))
+    cur.execute(
+        "INSERT INTO stock_bars_daily VALUES ('SPY', ?, 450.0, 455.0, 448.0, 452.0, 452.0, 50000000, 0.0, 1.0)",
+        (recent_date,),
+    )
+    cur.execute(
+        "INSERT INTO stock_bars_daily VALUES ('SPY', ?, 400.0, 405.0, 398.0, 402.0, 402.0, 40000000, 0.0, 1.0)",
+        (old_date,),
+    )
 
     cur.execute("""
     CREATE TABLE cboe_daily_options (
@@ -527,8 +613,12 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
         total_volume REAL, equity_pc_ratio REAL, index_pc_ratio REAL, total_pc_ratio REAL, vix_volume REAL
     )
     """)
-    cur.execute("INSERT INTO cboe_daily_options VALUES ('cboe_recent', ?, 1000, 800, 1800, 0.65, 1.2, 0.8, 500)", (recent_date,))
-    cur.execute("INSERT INTO cboe_daily_options VALUES ('cboe_old', ?, 900, 700, 1600, 0.70, 1.1, 0.85, 450)", (old_date,))
+    cur.execute(
+        "INSERT INTO cboe_daily_options VALUES ('cboe_recent', ?, 1000, 800, 1800, 0.65, 1.2, 0.8, 500)", (recent_date,)
+    )
+    cur.execute(
+        "INSERT INTO cboe_daily_options VALUES ('cboe_old', ?, 900, 700, 1600, 0.70, 1.1, 0.85, 450)", (old_date,)
+    )
 
     cur.execute("""
     CREATE TABLE options_chains_eod (
@@ -537,18 +627,24 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
         implied_volatility REAL, delta REAL, gamma REAL, theta REAL, vega REAL, rho REAL
     )
     """)
-    cur.execute("""
+    cur.execute(
+        """
     INSERT INTO options_chains_eod VALUES (
         'C_recent', 'SPY', ?, '2026-12-18', 450.0, 'call', 5.0, 5.0, 4.9, 5.1,
         100, 500, 0.18, 0.5, 0.03, -0.04, 0.12, 0.05
     )
-    """, (recent_date,))
-    cur.execute("""
+    """,
+        (recent_date,),
+    )
+    cur.execute(
+        """
     INSERT INTO options_chains_eod VALUES (
         'C_old', 'SPY', ?, '2025-12-18', 400.0, 'call', 4.0, 4.0, 3.9, 4.1,
         50, 200, 0.22, 0.4, 0.02, -0.03, 0.10, 0.04
     )
-    """, (old_date,))
+    """,
+        (old_date,),
+    )
 
     cur.execute("""
     CREATE TABLE stock_bars_intraday (
@@ -557,8 +653,12 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
     """)
     recent_ts = f"{recent_date} 15:30:00"
     old_ts = f"{old_date} 15:30:00"
-    cur.execute("INSERT INTO stock_bars_intraday VALUES ('SPY', ?, '5min', 450.0, 451.0, 449.5, 450.5, 15000)", (recent_ts,))
-    cur.execute("INSERT INTO stock_bars_intraday VALUES ('SPY', ?, '5min', 400.0, 401.0, 399.5, 400.5, 12000)", (old_ts,))
+    cur.execute(
+        "INSERT INTO stock_bars_intraday VALUES ('SPY', ?, '5min', 450.0, 451.0, 449.5, 450.5, 15000)", (recent_ts,)
+    )
+    cur.execute(
+        "INSERT INTO stock_bars_intraday VALUES ('SPY', ?, '5min', 400.0, 401.0, 399.5, 400.5, 12000)", (old_ts,)
+    )
 
     conn.commit()
     conn.close()
@@ -570,6 +670,7 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
     class MockPoolCtx:
         async def __aenter__(self):
             return mock_pg_conn
+
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
@@ -637,13 +738,20 @@ def test_cli_sync_pg_days_back(tmp_path):
             "options_chains_eod": {"sqlite_count": 50, "synced_count": 50, "duration_seconds": 0.12},
         }
 
-        res = runner.invoke(app, [
-            "sync-pg",
-            "--pg-url", "postgresql://user:pass@localhost:5432/test",
-            "--sqlite-path", fake_db,
-            "--table", "options_chains_eod",
-            "--days-back", "90",
-        ])
+        res = runner.invoke(
+            app,
+            [
+                "sync-pg",
+                "--pg-url",
+                "postgresql://user:pass@localhost:5432/test",
+                "--sqlite-path",
+                fake_db,
+                "--table",
+                "options_chains_eod",
+                "--days-back",
+                "90",
+            ],
+        )
         assert res.exit_code == 0
         assert "options_chains_eod" in res.stdout
         assert "Days Back:" in res.stdout
@@ -657,11 +765,14 @@ async def test_sync_sqlite_to_postgres_insufficient_privilege(tmp_path):
     """Verify that sync_sqlite_to_postgres gracefully handles InsufficientPrivilegeError on DDL."""
     db_path = str(tmp_path / "test_empty.db")
     conn = sqlite3.connect(db_path)
-    conn.execute("CREATE TABLE congressional_filings (filing_id TEXT PRIMARY KEY, chamber TEXT, member_name TEXT, member_id TEXT, filing_year INTEGER, filing_date TEXT, doc_url TEXT, raw_text TEXT, sha256_hash TEXT, status TEXT)")
+    conn.execute(
+        "CREATE TABLE congressional_filings (filing_id TEXT PRIMARY KEY, chamber TEXT, member_name TEXT, member_id TEXT, filing_year INTEGER, filing_date TEXT, doc_url TEXT, raw_text TEXT, sha256_hash TEXT, status TEXT)"
+    )
     conn.commit()
     conn.close()
 
     mock_pg_conn = AsyncMock()
+
     async def mock_execute(query: str, *args: object) -> str:
         if "CREATE SCHEMA" in query or "CREATE TABLE" in query:
             raise asyncpg.exceptions.InsufficientPrivilegeError("permission denied for database postgres")
@@ -688,7 +799,3 @@ async def test_sync_sqlite_to_postgres_insufficient_privilege(tmp_path):
             sqlite_path=db_path,
         )
         assert "congressional_filings" in summary
-
-
-
-

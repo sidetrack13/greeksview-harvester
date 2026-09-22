@@ -308,4 +308,3 @@ class ListingStatusRecord(BaseModel):
     ipo_date: str | None = None
     delisting_date: str | None = None
     status: str = "Active"
-

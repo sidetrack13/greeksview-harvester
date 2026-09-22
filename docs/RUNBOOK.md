@@ -116,6 +116,59 @@ uv run harvester run alphavantage --dataset all --symbols SPY
 uv run harvester run alphavantage --dataset all --mock
 ```
 
+### Universe Slicing & Large-Scale Ingestion (`@file` Syntax)
+
+The Harvester CLI natively supports loading universe ticker lists from text files using the `@filename` syntax in the `--symbols` argument. This avoids OS command-line buffer limits (`ARG_MAX`) when orchestrating sweeps across thousands of tickers.
+
+Pre-built, normalized universe reference files are provided in the repository root and `data/`:
+
+| Universe File | Count | Scope & Asset Types | Sourcing Origin & Filtering |
+| :--- | :---: | :--- | :--- |
+| **`all_equities.txt`** | **14,439** | Full active US equity, ETF, and ADR universe | SEC & Alpha Vantage `LISTING_STATUS` |
+| **`optionable_tickers.txt`** | **5,350** | Curated universe of equities (**3,710**) and ETFs (**1,640**) with listed options | Official Cboe Exchange Directories (`opt`, `cone`, `ctwo`, `exo`) |
+
+Lines beginning with `#` and empty whitespace are automatically ignored.
+
+```bash
+# 1. Stocks & ETFs Universe (14,439 symbols) — Full 20+ Year Daily History
+uv run harvester run alphavantage \
+  --dataset daily \
+  --outputsize full \
+  --symbols @all_equities.txt
+
+# 2. Stocks & ETFs Universe (14,439 symbols) — 5-Minute Intraday Bars
+uv run harvester run alphavantage \
+  --dataset intraday \
+  --interval 5min \
+  --outputsize full \
+  --symbols @all_equities.txt
+
+# 3. Optionable Universe (5,350 symbols) — Historical Options Chains with Moneyness & Activity Pruning
+#    Keeps strikes within +/-40% of spot and skips inactive contracts (0 vol & 0 OI), saving 60-75% disk:
+uv run harvester run alphavantage \
+  --dataset options \
+  --symbols @optionable_tickers.txt \
+  --moneyness-band 40 \
+  --prune-inactive
+
+# 4. Multi-Dataset Pass (All Data Families) for Optionable Universe
+uv run harvester run alphavantage \
+  --dataset all \
+  --symbols @optionable_tickers.txt \
+  --interval 5min \
+  --outputsize full \
+  --moneyness-band 40 \
+  --prune-inactive
+```
+
+> **High-Throughput Commercial Pacer Tuning**:
+> Alpha Vantage commercial tiers support up to **30 requests/second** and **1,200 requests/minute**. To maximize ingestion velocity while reserving headroom for concurrent GreeksView web services, configure the rate pacers in `.env`:
+> ```ini
+> ALPHAVANTAGE_RPM=1100
+> ALPHAVANTAGE_MAX_PER_SECOND=20
+> ```
+
+
 ### Ingesting Congressional Disclosures (`congressional`)
 ```bash
 # Crawl House of Representatives PTRs for a specific year

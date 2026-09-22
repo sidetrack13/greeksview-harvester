@@ -46,6 +46,8 @@ def test_generate_mock_ptr_pdf_missing_reportlab() -> None:
             raise ImportError("No module named 'reportlab'")
         return orig_import(name, *args, **kwargs)
 
-    with patch("builtins.__import__", side_effect=mock_import), pytest.raises(ImportError, match="reportlab is required"):
+    with (
+        patch("builtins.__import__", side_effect=mock_import),
+        pytest.raises(ImportError, match="reportlab is required"),
+    ):
         MockHouseServer.generate_mock_ptr_pdf()
-

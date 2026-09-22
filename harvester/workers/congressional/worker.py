@@ -69,11 +69,14 @@ class CongressionalWorker(BaseWorker):
         use_mock = kwargs.get("use_mock", False) or self.settings.simulation_mode
 
         try:
-            async with DatabaseManager(self.settings) as db, resilient_http_client(
-                timeout_seconds=self.settings.request_timeout_seconds,
-                max_retries=self.settings.http_max_retries,
-                max_concurrency=self.settings.max_concurrent_downloads,
-            ) as http_client:
+            async with (
+                DatabaseManager(self.settings) as db,
+                resilient_http_client(
+                    timeout_seconds=self.settings.request_timeout_seconds,
+                    max_retries=self.settings.http_max_retries,
+                    max_concurrency=self.settings.max_concurrent_downloads,
+                ) as http_client,
+            ):
                 senate_client = SenateEfdClient(http_client=http_client, settings=self.settings) if senate else None
                 for target_year in target_years:
                     if house:
@@ -88,7 +91,9 @@ class CongressionalWorker(BaseWorker):
 
                     if senate:
                         try:
-                            sp = SenatePipeline(db=db, http_client=http_client, settings=self.settings, client=senate_client)
+                            sp = SenatePipeline(
+                                db=db, http_client=http_client, settings=self.settings, client=senate_client
+                            )
                             s_report = await sp.run(year=target_year, limit=limit, use_mock=use_mock)
                             harvested += s_report.filings_parsed
                             upserted += s_report.transactions_extracted
