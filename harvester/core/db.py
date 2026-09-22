@@ -705,6 +705,11 @@ class DatabaseManager:
             target = self.sqlite_path or "greeksview_harvester.db"
             self._sqlite_conn = await aiosqlite.connect(target)
             self._sqlite_conn.row_factory = aiosqlite.Row
+            await self._sqlite_conn.execute("PRAGMA journal_mode = WAL;")
+            await self._sqlite_conn.execute("PRAGMA synchronous = NORMAL;")
+            await self._sqlite_conn.execute("PRAGMA busy_timeout = 60000;")
+            await self._sqlite_conn.execute("PRAGMA temp_store = MEMORY;")
+            await self._sqlite_conn.execute("PRAGMA cache_size = -64000;")
             await self._sqlite_conn.executescript(SQLITE_SCHEMA)
             await self._sqlite_conn.commit()
             logger.info("Connected to SQLite database: %s", target)
@@ -1403,25 +1408,29 @@ class DatabaseManager:
                 split_coefficient = excluded.split_coefficient,
                 updated_at = datetime('now')
             """
+            batch = []
             for r in records:
-                cur = await self._sqlite_conn.execute(
-                    query,
-                    (
-                        r["symbol"].upper(),
-                        str(r["trade_date"]),
-                        float(r["open"]),
-                        float(r["high"]),
-                        float(r["low"]),
-                        float(r["close"]),
-                        float(r["adjusted_close"]),
-                        int(r["volume"]),
-                        float(r.get("dividend_amount", 0.0)),
-                        float(r.get("split_coefficient", 1.0)),
-                    ),
-                )
-                if cur.rowcount > 0:
-                    count += 1
-            await self._sqlite_conn.commit()
+                try:
+                    batch.append(
+                        (
+                            r["symbol"].upper(),
+                            str(r["trade_date"]),
+                            float(r["open"]),
+                            float(r["high"]),
+                            float(r["low"]),
+                            float(r["close"]),
+                            float(r["adjusted_close"]),
+                            int(r["volume"]),
+                            float(r.get("dividend_amount", 0.0)),
+                            float(r.get("split_coefficient", 1.0)),
+                        )
+                    )
+                except (KeyError, ValueError, TypeError, AttributeError):
+                    continue
+            if batch:
+                await self._sqlite_conn.executemany(query, batch)
+                await self._sqlite_conn.commit()
+                count = len(batch)
         else:
             assert self._pg_pool is not None
             query = """
@@ -1484,23 +1493,27 @@ class DatabaseManager:
                 close = excluded.close,
                 volume = excluded.volume
             """
+            batch = []
             for r in records:
-                cur = await self._sqlite_conn.execute(
-                    query,
-                    (
-                        r["symbol"].upper(),
-                        str(r["bar_timestamp"]),
-                        r["interval"],
-                        float(r["open"]),
-                        float(r["high"]),
-                        float(r["low"]),
-                        float(r["close"]),
-                        int(r["volume"]),
-                    ),
-                )
-                if cur.rowcount > 0:
-                    count += 1
-            await self._sqlite_conn.commit()
+                try:
+                    batch.append(
+                        (
+                            r["symbol"].upper(),
+                            str(r["bar_timestamp"]),
+                            r["interval"],
+                            float(r["open"]),
+                            float(r["high"]),
+                            float(r["low"]),
+                            float(r["close"]),
+                            int(r["volume"]),
+                        )
+                    )
+                except (KeyError, ValueError, TypeError, AttributeError):
+                    continue
+            if batch:
+                await self._sqlite_conn.executemany(query, batch)
+                await self._sqlite_conn.commit()
+                count = len(batch)
         else:
             assert self._pg_pool is not None
             query = """
@@ -1567,33 +1580,37 @@ class DatabaseManager:
                 vega = excluded.vega,
                 rho = excluded.rho
             """
+            batch = []
             for r in records:
-                cur = await self._sqlite_conn.execute(
-                    query,
-                    (
-                        r["contract_id"],
-                        r["symbol"].upper(),
-                        str(r["trade_date"]),
-                        str(r["expiration"]),
-                        float(r["strike"]),
-                        r["option_type"].lower(),
-                        float(r["last_price"]) if r.get("last_price") is not None else None,
-                        float(r["mark_price"]) if r.get("mark_price") is not None else None,
-                        float(r["bid"]) if r.get("bid") is not None else None,
-                        float(r["ask"]) if r.get("ask") is not None else None,
-                        optional_int(r.get("volume")),
-                        optional_int(r.get("open_interest")),
-                        float(r["implied_volatility"]) if r.get("implied_volatility") is not None else None,
-                        float(r["delta"]) if r.get("delta") is not None else None,
-                        float(r["gamma"]) if r.get("gamma") is not None else None,
-                        float(r["theta"]) if r.get("theta") is not None else None,
-                        float(r["vega"]) if r.get("vega") is not None else None,
-                        float(r["rho"]) if r.get("rho") is not None else None,
-                    ),
-                )
-                if cur.rowcount > 0:
-                    count += 1
-            await self._sqlite_conn.commit()
+                try:
+                    batch.append(
+                        (
+                            r["contract_id"],
+                            r["symbol"].upper(),
+                            str(r["trade_date"]),
+                            str(r["expiration"]),
+                            float(r["strike"]),
+                            r["option_type"].lower(),
+                            float(r["last_price"]) if r.get("last_price") is not None else None,
+                            float(r["mark_price"]) if r.get("mark_price") is not None else None,
+                            float(r["bid"]) if r.get("bid") is not None else None,
+                            float(r["ask"]) if r.get("ask") is not None else None,
+                            optional_int(r.get("volume")),
+                            optional_int(r.get("open_interest")),
+                            float(r["implied_volatility"]) if r.get("implied_volatility") is not None else None,
+                            float(r["delta"]) if r.get("delta") is not None else None,
+                            float(r["gamma"]) if r.get("gamma") is not None else None,
+                            float(r["theta"]) if r.get("theta") is not None else None,
+                            float(r["vega"]) if r.get("vega") is not None else None,
+                            float(r["rho"]) if r.get("rho") is not None else None,
+                        )
+                    )
+                except (KeyError, ValueError, TypeError, AttributeError):
+                    continue
+            if batch:
+                await self._sqlite_conn.executemany(query, batch)
+                await self._sqlite_conn.commit()
+                count = len(batch)
         else:
             assert self._pg_pool is not None
             query = """
@@ -1669,20 +1686,24 @@ class DatabaseManager:
                 data_json = excluded.data_json,
                 updated_at = datetime('now')
             """
+            batch = []
             for r in records:
-                cur = await self._sqlite_conn.execute(
-                    query,
-                    (
-                        r["symbol"].upper(),
-                        str(r["fiscal_date_ending"]),
-                        r["report_type"].upper(),
-                        r.get("period_type", "annual").lower(),
-                        r["data_json"],
-                    ),
-                )
-                if cur.rowcount > 0:
-                    count += 1
-            await self._sqlite_conn.commit()
+                try:
+                    batch.append(
+                        (
+                            r["symbol"].upper(),
+                            str(r["fiscal_date_ending"]),
+                            r["report_type"].upper(),
+                            r.get("period_type", "annual").lower(),
+                            r["data_json"],
+                        )
+                    )
+                except (KeyError, ValueError, TypeError, AttributeError):
+                    continue
+            if batch:
+                await self._sqlite_conn.executemany(query, batch)
+                await self._sqlite_conn.commit()
+                count = len(batch)
         else:
             assert self._pg_pool is not None
             query = """
@@ -1728,21 +1749,25 @@ class DatabaseManager:
                 payment_date = excluded.payment_date,
                 amount = excluded.amount
             """
+            batch = []
             for r in records:
-                cur = await self._sqlite_conn.execute(
-                    query,
-                    (
-                        r["symbol"].upper(),
-                        str(r["ex_dividend_date"]),
-                        str(r["declaration_date"]) if r.get("declaration_date") else None,
-                        str(r["record_date"]) if r.get("record_date") else None,
-                        str(r["payment_date"]) if r.get("payment_date") else None,
-                        float(r["amount"]),
-                    ),
-                )
-                if cur.rowcount > 0:
-                    count += 1
-            await self._sqlite_conn.commit()
+                try:
+                    batch.append(
+                        (
+                            r["symbol"].upper(),
+                            str(r["ex_dividend_date"]),
+                            str(r["declaration_date"]) if r.get("declaration_date") else None,
+                            str(r["record_date"]) if r.get("record_date") else None,
+                            str(r["payment_date"]) if r.get("payment_date") else None,
+                            float(r["amount"]),
+                        )
+                    )
+                except (KeyError, ValueError, TypeError, AttributeError):
+                    continue
+            if batch:
+                await self._sqlite_conn.executemany(query, batch)
+                await self._sqlite_conn.commit()
+                count = len(batch)
         else:
             assert self._pg_pool is not None
             query = """
@@ -1793,18 +1818,22 @@ class DatabaseManager:
             ON CONFLICT (symbol, effective_date) DO UPDATE SET
                 split_factor = excluded.split_factor
             """
+            batch = []
             for r in records:
-                cur = await self._sqlite_conn.execute(
-                    query,
-                    (
-                        r["symbol"].upper(),
-                        str(r["effective_date"]),
-                        float(r["split_factor"]),
-                    ),
-                )
-                if cur.rowcount > 0:
-                    count += 1
-            await self._sqlite_conn.commit()
+                try:
+                    batch.append(
+                        (
+                            r["symbol"].upper(),
+                            str(r["effective_date"]),
+                            float(r["split_factor"]),
+                        )
+                    )
+                except (KeyError, ValueError, TypeError, AttributeError):
+                    continue
+            if batch:
+                await self._sqlite_conn.executemany(query, batch)
+                await self._sqlite_conn.commit()
+                count = len(batch)
         else:
             assert self._pg_pool is not None
             query = """
@@ -1853,22 +1882,26 @@ class DatabaseManager:
                 sectors_json = excluded.sectors_json,
                 updated_at = datetime('now')
             """
+            batch = []
             for r in records:
-                cur = await self._sqlite_conn.execute(
-                    query,
-                    (
-                        r["symbol"].upper(),
-                        float(r["net_assets"]) if r.get("net_assets") is not None else None,
-                        float(r["portfolio_turnover"]) if r.get("portfolio_turnover") is not None else None,
-                        float(r["dividend_yield"]) if r.get("dividend_yield") is not None else None,
-                        float(r["expense_ratio"]) if r.get("expense_ratio") is not None else None,
-                        r.get("holdings_json", "[]"),
-                        r.get("sectors_json", "[]"),
-                    ),
-                )
-                if cur.rowcount > 0:
-                    count += 1
-            await self._sqlite_conn.commit()
+                try:
+                    batch.append(
+                        (
+                            r["symbol"].upper(),
+                            float(r["net_assets"]) if r.get("net_assets") is not None else None,
+                            float(r["portfolio_turnover"]) if r.get("portfolio_turnover") is not None else None,
+                            float(r["dividend_yield"]) if r.get("dividend_yield") is not None else None,
+                            float(r["expense_ratio"]) if r.get("expense_ratio") is not None else None,
+                            r.get("holdings_json", "[]"),
+                            r.get("sectors_json", "[]"),
+                        )
+                    )
+                except (KeyError, ValueError, TypeError, AttributeError):
+                    continue
+            if batch:
+                await self._sqlite_conn.executemany(query, batch)
+                await self._sqlite_conn.commit()
+                count = len(batch)
         else:
             assert self._pg_pool is not None
             query = """
@@ -1924,22 +1957,26 @@ class DatabaseManager:
                 status = excluded.status,
                 updated_at = datetime('now')
             """
+            batch = []
             for r in records:
-                cur = await self._sqlite_conn.execute(
-                    query,
-                    (
-                        r["symbol"].upper(),
-                        r.get("name"),
-                        r.get("exchange"),
-                        r.get("asset_type"),
-                        str(r["ipo_date"]) if r.get("ipo_date") else None,
-                        str(r["delisting_date"]) if r.get("delisting_date") else None,
-                        r.get("status", "Active"),
-                    ),
-                )
-                if cur.rowcount > 0:
-                    count += 1
-            await self._sqlite_conn.commit()
+                try:
+                    batch.append(
+                        (
+                            r["symbol"].upper(),
+                            r.get("name"),
+                            r.get("exchange"),
+                            r.get("asset_type"),
+                            str(r["ipo_date"]) if r.get("ipo_date") else None,
+                            str(r["delisting_date"]) if r.get("delisting_date") else None,
+                            r.get("status", "Active"),
+                        )
+                    )
+                except (KeyError, ValueError, TypeError, AttributeError):
+                    continue
+            if batch:
+                await self._sqlite_conn.executemany(query, batch)
+                await self._sqlite_conn.commit()
+                count = len(batch)
         else:
             assert self._pg_pool is not None
             query = """
