@@ -3,6 +3,7 @@
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import asyncpg
 import pytest
 
 from harvester.config import Settings
@@ -355,3 +356,36 @@ def test_database_manager_path_resolution() -> None:
     db5 = DatabaseManager(settings=s5)
     assert db5.sqlite_path == ""
     assert db5.settings.is_sqlite is False
+
+
+@pytest.mark.asyncio
+async def test_postgres_connect_insufficient_privilege() -> None:
+    """Verify that DatabaseManager.connect gracefully handles InsufficientPrivilegeError on DDL."""
+    settings = Settings(database_url="postgresql://user:pass@localhost:5432/db", pgssl="false")
+    db = DatabaseManager(settings=settings)
+
+    mock_pool = MagicMock()
+    mock_conn = AsyncMock()
+
+    class MockAcquireContext:
+        async def __aenter__(self) -> AsyncMock:
+            return mock_conn
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            pass
+
+    mock_pool.acquire.return_value = MockAcquireContext()
+    mock_pool.close = AsyncMock()
+
+    async def mock_execute(query: str, *args: object) -> str:
+        if "CREATE SCHEMA" in query or "CREATE TABLE" in query:
+            raise asyncpg.exceptions.InsufficientPrivilegeError("permission denied for database postgres")
+        return "OK"
+
+    mock_conn.execute.side_effect = mock_execute
+
+    with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        mock_create_pool.return_value = mock_pool
+        await db.connect()
+        assert db._pg_pool is not None
+

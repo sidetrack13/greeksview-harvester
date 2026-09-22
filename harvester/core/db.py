@@ -703,9 +703,15 @@ class DatabaseManager:
                 server_settings={"search_path": f'"{schema}", public'},
             )
             async with self._pg_pool.acquire() as conn:
-                await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}";')
+                try:
+                    await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}";')
+                except (asyncpg.exceptions.InsufficientPrivilegeError, asyncpg.exceptions.PostgresError) as e:
+                    logger.debug("Insufficient privilege to CREATE SCHEMA '%s' (%s); assuming schema exists", schema, e)
                 await conn.execute(f'SET search_path = "{schema}", public;')
-                await conn.execute(POSTGRES_SCHEMA)
+                try:
+                    await conn.execute(POSTGRES_SCHEMA)
+                except (asyncpg.exceptions.InsufficientPrivilegeError, asyncpg.exceptions.PostgresError) as e:
+                    logger.debug("Insufficient privilege to execute DDL (%s); assuming tables already exist in '%s'", e, schema)
             logger.info("Connected to PostgreSQL pool (schema=%s): %s", schema, self.settings.database_url.split("@")[-1])
 
     async def close(self) -> None:
