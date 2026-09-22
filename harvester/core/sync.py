@@ -7,6 +7,8 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import asyncpg
+
 from harvester.config import Settings, get_settings
 from harvester.core.db import (
     POSTGRES_SCHEMA,
@@ -111,11 +113,18 @@ async def sync_sqlite_to_postgres(
     await pg_manager.connect()
 
     # 1. Initialize PostgreSQL schema (idempotent)
+    assert pg_manager._pg_pool is not None
     async with pg_manager._pg_pool.acquire() as conn:
         schema = pg_manager.settings.database_schema
-        await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}";')
+        try:
+            await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}";')
+        except (asyncpg.exceptions.InsufficientPrivilegeError, asyncpg.exceptions.PostgresError) as e:
+            logger.debug("Insufficient privilege to CREATE SCHEMA '%s' (%s); assuming schema exists", schema, e)
         await conn.execute(f'SET search_path = "{schema}", public;')
-        await conn.execute(POSTGRES_SCHEMA)
+        try:
+            await conn.execute(POSTGRES_SCHEMA)
+        except (asyncpg.exceptions.InsufficientPrivilegeError, asyncpg.exceptions.PostgresError) as e:
+            logger.debug("Insufficient privilege to execute DDL (%s); assuming tables already exist in '%s'", e, schema)
 
     summary: dict[str, dict[str, Any]] = {}
     sqlite_conn = sqlite3.connect(sqlite_path)

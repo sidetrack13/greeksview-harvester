@@ -4,6 +4,7 @@ import sqlite3
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import asyncpg
 import pytest
 from typer.testing import CliRunner
 
@@ -649,6 +650,45 @@ def test_cli_sync_pg_days_back(tmp_path):
         assert "90" in res.stdout
         mock_sync.assert_called_once()
         assert mock_sync.call_args.kwargs["days_back"] == 90
+
+
+@pytest.mark.asyncio
+async def test_sync_sqlite_to_postgres_insufficient_privilege(tmp_path):
+    """Verify that sync_sqlite_to_postgres gracefully handles InsufficientPrivilegeError on DDL."""
+    db_path = str(tmp_path / "test_empty.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE congressional_filings (filing_id TEXT PRIMARY KEY, chamber TEXT, member_name TEXT, member_id TEXT, filing_year INTEGER, filing_date TEXT, doc_url TEXT, raw_text TEXT, sha256_hash TEXT, status TEXT)")
+    conn.commit()
+    conn.close()
+
+    mock_pg_conn = AsyncMock()
+    async def mock_execute(query: str, *args: object) -> str:
+        if "CREATE SCHEMA" in query or "CREATE TABLE" in query:
+            raise asyncpg.exceptions.InsufficientPrivilegeError("permission denied for database postgres")
+        return "OK"
+
+    mock_pg_conn.execute.side_effect = mock_execute
+    mock_pg_conn.executemany = AsyncMock()
+
+    class MockPoolAcquireContext:
+        async def __aenter__(self):
+            return mock_pg_conn
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value = MockPoolAcquireContext()
+    mock_pool.close = AsyncMock()
+
+    with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        mock_create_pool.return_value = mock_pool
+        summary = await sync_sqlite_to_postgres(
+            pg_url="postgresql://user:pass@localhost:5432/testdb",
+            sqlite_path=db_path,
+        )
+        assert "congressional_filings" in summary
+
 
 
 
