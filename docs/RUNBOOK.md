@@ -94,6 +94,13 @@ uv run harvester run alphavantage --dataset options --symbols SPY,QQQ --sessions
 # builds-from-zero: a dropped contract has no baseline row on the day its OI starts to build.
 uv run harvester run alphavantage --dataset options --symbols SPY,QQQ --days-back 252 --moneyness-band 40 --prune-inactive
 
+# Auto-Resume & Interruption Protection (--skip-existing):
+# Enabled by default (--skip-existing). Performs sub-millisecond B-Tree indexed lookups
+# against options_chains_eod. If a symbol/date pair is already present in the database,
+# the vendor API call is bypassed entirely, allowing large-scale backfills to be safely
+# stopped and resumed without duplicate downloads. To force a full re-fetch: --no-skip-existing.
+uv run harvester run alphavantage --dataset options --symbols SPY --days-back 800 --skip-existing
+
 # Archive older options to compressed .csv.gz files and prune live database:
 uv run harvester archive-options --days-to-keep 90 --output-dir ./archives --prune
 
@@ -148,18 +155,40 @@ uv run harvester run alphavantage \
 uv run harvester run alphavantage \
   --dataset options \
   --symbols @optionable_tickers.txt \
+  --days-back 800 \
   --moneyness-band 40 \
-  --prune-inactive
+  --prune-inactive \
+  --skip-existing
 
-# 4. Multi-Dataset Pass (All Data Families) for Optionable Universe
+# 4. Multi-Dataset Pass (All Data Families) for Optionable Universe (Authoritative 800-Day Ingestion)
 uv run harvester run alphavantage \
   --dataset all \
   --symbols @optionable_tickers.txt \
+  --days-back 800 \
   --interval 5min \
   --outputsize full \
   --moneyness-band 40 \
-  --prune-inactive
+  --prune-inactive \
+  --skip-existing \
+  --db-url sqlite:///greeksview_harvester.db
 ```
+
+### Auto-Resume & Idempotent Ingestion Engine
+
+When running multi-day or multi-year historical sweeps (e.g. `--days-back 800`), processes may be paused, interrupted by rate-limit cooldowns, or interrupted by network reconnections.
+
+* **Sub-Millisecond Verification**: The engine issues `SELECT DISTINCT trade_date FROM options_chains_eod WHERE symbol = ?` prior to fetching any options chain. Powered by composite index `idx_options_chains_sym_date(symbol, trade_date)`, this check executes in **< 1 ms**.
+* **Zero Duplicate Downloads**: If a ticker already has all requested sessions stored in the database, the symbol is skipped immediately (0 network calls, 0 delay).
+* **Seamless Partial Resumes**: If a symbol has partial coverage (e.g. 174 sessions stored out of 571), only the missing 397 sessions are queried from the vendor.
+* **Audit & Honesty Accounting**: Skipped sessions are tracked in `HarvestReport.skipped["options_already_stored"]` and logged in the terminal summary.
+
+### Storage & Infrastructure Sizing (Supabase Pro)
+
+For an 800-calendar-day historical options load (~571 market sessions) across the 5,350 optionable tickers:
+* **Average Pruned Contracts**: ~673,415 contracts per session across all symbols (~133 contracts/ticker).
+* **Projected Database Volume**: ~384.5M options rows (~128.9 GB data + B-tree indexes) + ~19.3M daily bars (~3.2 GB) + ~10.1M intraday bars (~2.0 GB) = **~134.3 GB total footprint**.
+* **Supabase Pro Operational Cost**: **~$40.75 / month** ($25.00 base + ~$15.75 for 126 GB disk overage at $0.125/GB).
+* **Why Hot PostgreSQL is Preserved**: Keeping all 800 days in PostgreSQL preserves **sub-millisecond B-tree index traversal** (< 1ms per options chain, < 15ms for 52-week IV rank, < 50ms for multi-year vector backtests) without the multi-second latency penalties of fetching and decompressing cold S3 archives.
 
 > **High-Throughput Commercial Pacer Tuning**:
 > Alpha Vantage commercial tiers support up to **30 requests/second** and **1,200 requests/minute**. To maximize ingestion velocity while reserving headroom for concurrent GreeksView web services, configure the rate pacers in `.env`:
