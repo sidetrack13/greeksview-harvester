@@ -16,6 +16,7 @@ from harvester.core.db import (
     as_vendor_eastern,
     optional_int,
     sqlite_file_is_mock,
+    to_pg_date,
 )
 
 logger = logging.getLogger(__name__)
@@ -25,24 +26,7 @@ class MockDatabaseRefusedError(RuntimeError):
     """Raised when sync-pg is pointed at a SQLite file a mock run has written to."""
 
 
-def _parse_date(val: Any) -> date | None:
-    """Safely parse SQLite date string to datetime.date object."""
-    if val is None or val == "":
-        return None
-    if isinstance(val, datetime):
-        return val.date()
-    if isinstance(val, date):
-        return val
-    s = str(val).strip().split(" ")[0]
-    try:
-        return date.fromisoformat(s)
-    except Exception:
-        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
-            try:
-                return datetime.strptime(s, fmt).date()
-            except ValueError:
-                continue
-    return None
+_parse_date = to_pg_date
 
 
 def _parse_datetime(val: Any) -> datetime | None:
