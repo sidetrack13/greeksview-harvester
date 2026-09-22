@@ -491,6 +491,7 @@ class AlphaVantageWorker(BaseWorker):
         days_back: int | None = None,
         moneyness_band_pct: float | None = None,
         prune_inactive: bool = False,
+        skip_existing: bool = True,
         use_mock: bool = False,
         report: HarvestReport | None = None,
     ) -> tuple[int, int]:
@@ -508,6 +509,9 @@ class AlphaVantageWorker(BaseWorker):
         are both 0. It never drops a row whose volume or open interest is unknown
         (NULL). Pruning hides builds-from-zero: a contract dropped at 0 OI has no
         stored baseline on the day its open interest starts to build.
+
+        ``skip_existing`` checks ``options_chains_eod`` for dates already stored for
+        each symbol and skips querying the vendor for them, enabling fast auto-resume.
         """
         rep = report if report is not None else HarvestReport()
         harvested = 0
@@ -516,9 +520,27 @@ class AlphaVantageWorker(BaseWorker):
         band = moneyness_band_pct if moneyness_band_pct is not None and moneyness_band_pct > 0 else None
 
         for sym in symbols:
+            existing_dates: set[str] = set()
+            if skip_existing:
+                existing_dates = await db.get_stored_options_dates(sym)
+
+            needed_dates = [dt for dt in target_dates if dt not in existing_dates]
+            skipped_dates_count = len(target_dates) - len(needed_dates)
+            if skipped_dates_count > 0:
+                rep.skipped["options_already_stored"] += skipped_dates_count
+                logger.info(
+                    "Skipping %d already-stored options sessions for %s (%d remaining)",
+                    skipped_dates_count,
+                    sym,
+                    len(needed_dates),
+                )
+
+            if not needed_dates:
+                continue
+
             records: list[dict[str, Any]] = []
             if use_mock:
-                for dt in target_dates:
+                for dt in needed_dates:
                     mock_spot = 455.0
                     for mock_strike in (300.0, 450.0, 455.0, 460.0, 600.0):
                         if band is not None and abs(mock_strike - mock_spot) / mock_spot > (band / 100.0):
@@ -553,7 +575,7 @@ class AlphaVantageWorker(BaseWorker):
                             )
             else:
                 spots: dict[str, float | None] = {}
-                for dt in target_dates:
+                for dt in needed_dates:
                     try:
                         data = await self.client.fetch_json("HISTORICAL_OPTIONS", {"symbol": sym, "date": dt})
                     except AlphaVantageError as exc:
@@ -922,6 +944,7 @@ class AlphaVantageWorker(BaseWorker):
                                 "harvest --dataset daily for it first."
                             )
                         days_back = None
+                    skip_existing = bool(kwargs.get("skip_existing", True))
                     h, u = await self.download_historical_options(
                         db,
                         target_symbols,
@@ -929,6 +952,7 @@ class AlphaVantageWorker(BaseWorker):
                         days_back=days_back,
                         moneyness_band_pct=kwargs.get("moneyness_band_pct"),
                         prune_inactive=bool(kwargs.get("prune_inactive", False)),
+                        skip_existing=skip_existing,
                         use_mock=use_mock,
                         report=report,
                     )

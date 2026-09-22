@@ -139,6 +139,13 @@ def run_command(
             help="Drop options contracts whose reported volume AND open interest are both 0 (default: False). Rows with unknown volume/OI are never dropped. Pruning hides builds-from-zero: a dropped contract has no baseline row on the day its OI starts to build",
         ),
     ] = False,
+    skip_existing: Annotated[
+        bool,
+        typer.Option(
+            "--skip-existing/--no-skip-existing",
+            help="Alpha Vantage options: skip already-stored (symbol, date) pairs to enable fast resume (default: True)",
+        ),
+    ] = True,
     trade_dates: Annotated[
         str | None,
         typer.Option(
@@ -246,6 +253,10 @@ def run_command(
                 kwargs["moneyness_band_pct"] = moneyness_band
             if prune_inactive:
                 kwargs["prune_inactive"] = True
+            if not skip_existing:
+                kwargs["skip_existing"] = False
+            else:
+                kwargs["skip_existing"] = True
             if dataset is not None:
                 kwargs["dataset"] = dataset
             if symbols is not None:
