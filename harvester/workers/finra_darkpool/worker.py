@@ -26,8 +26,20 @@ logger = logging.getLogger("harvester.workers.finra_darkpool")
 # FINRA OTC Transparency Data Base URL
 FINRA_API_BASE = "https://api.finra.org/data/group/otcMarket/name"
 DEFAULT_BENCHMARK_SYMBOLS = [
-    "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA",
-    "SPY", "QQQ", "IWM", "AMD", "PLTR", "COIN", "SMCI",
+    "NVDA",
+    "AAPL",
+    "MSFT",
+    "AMZN",
+    "GOOGL",
+    "META",
+    "TSLA",
+    "SPY",
+    "QQQ",
+    "IWM",
+    "AMD",
+    "PLTR",
+    "COIN",
+    "SMCI",
 ]
 
 
@@ -89,9 +101,7 @@ class FinraDarkPoolWorker(BaseWorker):
                 for w_date in weeks_to_process:
                     for sym in symbols_to_process:
                         try:
-                            record = await self._fetch_or_simulate_otc_data(
-                                sym, w_date, use_mock=use_mock
-                            )
+                            record = await self._fetch_or_simulate_otc_data(sym, w_date, use_mock=use_mock)
                             harvested += 1
 
                             # Upsert into database
@@ -122,9 +132,7 @@ class FinraDarkPoolWorker(BaseWorker):
             },
         )
 
-    async def _fetch_or_simulate_otc_data(
-        self, symbol: str, week_start: str, use_mock: bool = False
-    ) -> dict[str, Any]:
+    async def _fetch_or_simulate_otc_data(self, symbol: str, week_start: str, use_mock: bool = False) -> dict[str, Any]:
         """Fetch weekly data from FINRA OTC API or generate realistic synthetic benchmark data."""
         # Check simulation mode or mock override
         if use_mock or self.settings.simulation_mode:
@@ -174,7 +182,9 @@ class FinraDarkPoolWorker(BaseWorker):
         dark_pool_pct = round(38.0 + ((seed_val % 100) * 0.1), 2)
         total_market_vol = round(base_volume / (dark_pool_pct / 100.0), 2)
 
-        tier = "Tier 1 NMS" if symbol in ("SPY", "QQQ", "NVDA", "AAPL", "MSFT", "AMZN", "META", "TSLA") else "Tier 2 NMS"
+        tier = (
+            "Tier 1 NMS" if symbol in ("SPY", "QQQ", "NVDA", "AAPL", "MSFT", "AMZN", "META", "TSLA") else "Tier 2 NMS"
+        )
 
         return {
             "id": f"finra_{symbol}_{week_start}",

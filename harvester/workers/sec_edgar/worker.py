@@ -60,8 +60,22 @@ class SecEdgarWorker(BaseWorker):
         errors: list[str] = []
 
         sample_tickers = tickers or [
-            "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA",
-            "SPY", "QQQ", "AMD", "AVGO", "COST", "NFLX", "JPM", "V", "WMT",
+            "NVDA",
+            "AAPL",
+            "MSFT",
+            "AMZN",
+            "GOOGL",
+            "META",
+            "TSLA",
+            "SPY",
+            "QQQ",
+            "AMD",
+            "AVGO",
+            "COST",
+            "NFLX",
+            "JPM",
+            "V",
+            "WMT",
         ]
         effective_limit = kwargs.get("limit") if kwargs.get("limit") is not None else limit
         target_tickers = sample_tickers[:effective_limit] if effective_limit is not None else sample_tickers
@@ -125,6 +139,7 @@ class SecEdgarWorker(BaseWorker):
         errors = []
 
         from datetime import UTC, datetime
+
         today_str = datetime.now(UTC).date().isoformat()
 
         for sym in tickers[:limit]:
@@ -166,6 +181,7 @@ class SecEdgarWorker(BaseWorker):
         try:
             await asyncio.sleep(0.05)
             from datetime import UTC, datetime
+
             today_str = datetime.now(UTC).date().isoformat()
             record = {
                 "id": f"13f_0001067983_{today_str}",

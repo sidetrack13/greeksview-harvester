@@ -42,10 +42,10 @@ class BaseWorker(ABC):
     @abstractmethod
     async def run_once(self, **kwargs) -> WorkerResult:
         """Execute a single harvesting cycle independently.
-        
+
         Args:
             **kwargs: Worker-specific runtime parameters (e.g. year, ticker, limit)
-            
+
         Returns:
             WorkerResult summarizing harvested counts, duration, and errors.
         """

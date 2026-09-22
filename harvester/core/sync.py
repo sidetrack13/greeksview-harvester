@@ -55,7 +55,6 @@ def _parse_datetime(val: Any) -> datetime | None:
     return None
 
 
-
 def _clean_str(val: Any) -> str | None:
     """Sanitize strings by removing PostgreSQL-incompatible null bytes (0x00)."""
     if val is None:
@@ -75,7 +74,7 @@ async def sync_sqlite_to_postgres(
     days_back: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Synchronize all or selected harvested tables from local SQLite to PostgreSQL.
-    
+
     If days_back is provided (e.g. 90), time-series tables (options_chains_eod,
     stock_bars_daily, cboe_daily_options) only sync records with trade_date >= (today - days_back).
 
@@ -115,9 +114,7 @@ async def sync_sqlite_to_postgres(
     sqlite_conn.row_factory = sqlite3.Row
 
     cutoff_date = (
-        (datetime.now(UTC).date() - timedelta(days=days_back)).isoformat()
-        if days_back and days_back > 0
-        else None
+        (datetime.now(UTC).date() - timedelta(days=days_back)).isoformat() if days_back and days_back > 0 else None
     )
 
     # Dependency order: filings must precede transactions for foreign key constraint
@@ -145,17 +142,15 @@ async def sync_sqlite_to_postgres(
         for tbl in active_tables:
             # Check if table exists in SQLite
             cur = sqlite_conn.cursor()
-            table_check = cur.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tbl,)
-            ).fetchone()
+            table_check = cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tbl,)).fetchone()
             if not table_check:
                 logger.info("Table %s does not exist in SQLite; skipping", tbl)
                 continue
 
             if cutoff_date and tbl in ("options_chains_eod", "stock_bars_daily", "cboe_daily_options"):
-                row_count = cur.execute(
-                    f"SELECT COUNT(*) FROM {tbl} WHERE trade_date >= ?", (cutoff_date,)
-                ).fetchone()[0]
+                row_count = cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE trade_date >= ?", (cutoff_date,)).fetchone()[
+                    0
+                ]
             elif cutoff_date and tbl == "stock_bars_intraday":
                 row_count = cur.execute(
                     f"SELECT COUNT(*) FROM {tbl} WHERE bar_timestamp >= ?", (cutoff_date,)
@@ -236,7 +231,9 @@ async def _sync_congressional_filings(sqlite_conn: sqlite3.Connection, pg_pool: 
         updated_at = NOW()
     """
     cur = sqlite_conn.cursor()
-    cur.execute("SELECT filing_id, chamber, member_name, member_id, filing_year, filing_date, doc_url, raw_text, sha256_hash, status FROM congressional_filings")
+    cur.execute(
+        "SELECT filing_id, chamber, member_name, member_id, filing_year, filing_date, doc_url, raw_text, sha256_hash, status FROM congressional_filings"
+    )
     total = 0
     async with pg_pool.acquire() as conn:
         while True:
@@ -248,18 +245,20 @@ async def _sync_congressional_filings(sqlite_conn: sqlite3.Connection, pg_pool: 
                 f_date = _parse_date(r["filing_date"])
                 if f_date is None:
                     continue
-                batch.append((
-                    _clean_str(r["filing_id"]),
-                    _clean_str(r["chamber"]),
-                    _clean_str(r["member_name"]),
-                    _clean_str(r["member_id"]),
-                    r["filing_year"],
-                    f_date,
-                    _clean_str(r["doc_url"]),
-                    _clean_str(r["raw_text"]),
-                    _clean_str(r["sha256_hash"]),
-                    _clean_str(r["status"]),
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["filing_id"]),
+                        _clean_str(r["chamber"]),
+                        _clean_str(r["member_name"]),
+                        _clean_str(r["member_id"]),
+                        r["filing_year"],
+                        f_date,
+                        _clean_str(r["doc_url"]),
+                        _clean_str(r["raw_text"]),
+                        _clean_str(r["sha256_hash"]),
+                        _clean_str(r["status"]),
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -295,25 +294,27 @@ async def _sync_congressional_transactions(sqlite_conn: sqlite3.Connection, pg_p
                 f_date = _parse_date(r["filing_date"])
                 if t_date is None or f_date is None:
                     continue
-                batch.append((
-                    _clean_str(r["filing_id"]),
-                    _clean_str(r["member_name"]),
-                    _clean_str(r["chamber"]),
-                    _clean_str(r["party"]),
-                    _clean_str(r["state"]),
-                    _clean_str(r["district"]),
-                    _clean_str(r["ticker"]),
-                    _clean_str(r["asset_description"]),
-                    _clean_str(r["asset_type"]),
-                    _clean_str(r["transaction_type"]),
-                    _clean_str(r["amount_bracket"]),
-                    float(r["amount_min"]) if r["amount_min"] is not None else 0.0,
-                    float(r["amount_max"]) if r["amount_max"] is not None else None,
-                    t_date,
-                    f_date,
-                    _clean_str(r["owner"]),
-                    _clean_str(r["comment"]),
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["filing_id"]),
+                        _clean_str(r["member_name"]),
+                        _clean_str(r["chamber"]),
+                        _clean_str(r["party"]),
+                        _clean_str(r["state"]),
+                        _clean_str(r["district"]),
+                        _clean_str(r["ticker"]),
+                        _clean_str(r["asset_description"]),
+                        _clean_str(r["asset_type"]),
+                        _clean_str(r["transaction_type"]),
+                        _clean_str(r["amount_bracket"]),
+                        float(r["amount_min"]) if r["amount_min"] is not None else 0.0,
+                        float(r["amount_max"]) if r["amount_max"] is not None else None,
+                        t_date,
+                        f_date,
+                        _clean_str(r["owner"]),
+                        _clean_str(r["comment"]),
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -343,15 +344,17 @@ async def _sync_macro_indicators(sqlite_conn: sqlite3.Connection, pg_pool: Any, 
                 if obs_date is None:
                     continue
                 val = float(r["value"]) if r["value"] is not None else 0.0
-                batch.append((
-                    _clean_str(r["id"]),
-                    _clean_str(r["series_id"]),
-                    _clean_str(r["indicator_name"]),
-                    obs_date,
-                    val,
-                    _clean_str(r["frequency"]),
-                    _clean_str(r["units"]),
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["id"]),
+                        _clean_str(r["series_id"]),
+                        _clean_str(r["indicator_name"]),
+                        obs_date,
+                        val,
+                        _clean_str(r["frequency"]),
+                        _clean_str(r["units"]),
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -396,17 +399,19 @@ async def _sync_cboe_daily_options(
                 t_date = _parse_date(r["trade_date"])
                 if t_date is None:
                     continue
-                batch.append((
-                    _clean_str(r["id"]),
-                    t_date,
-                    float(r["total_call_volume"] or 0),
-                    float(r["total_put_volume"] or 0),
-                    float(r["total_volume"] or 0),
-                    float(r["equity_pc_ratio"] or 0) if r["equity_pc_ratio"] is not None else None,
-                    float(r["index_pc_ratio"] or 0) if r["index_pc_ratio"] is not None else None,
-                    float(r["total_pc_ratio"] or 0) if r["total_pc_ratio"] is not None else None,
-                    float(r["vix_volume"] or 0) if r["vix_volume"] is not None else None,
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["id"]),
+                        t_date,
+                        float(r["total_call_volume"] or 0),
+                        float(r["total_put_volume"] or 0),
+                        float(r["total_volume"] or 0),
+                        float(r["equity_pc_ratio"] or 0) if r["equity_pc_ratio"] is not None else None,
+                        float(r["index_pc_ratio"] or 0) if r["index_pc_ratio"] is not None else None,
+                        float(r["total_pc_ratio"] or 0) if r["total_pc_ratio"] is not None else None,
+                        float(r["vix_volume"] or 0) if r["vix_volume"] is not None else None,
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -425,7 +430,9 @@ async def _sync_finra_otc_volume(sqlite_conn: sqlite3.Connection, pg_pool: Any, 
         dark_pool_share_pct = EXCLUDED.dark_pool_share_pct
     """
     cur = sqlite_conn.cursor()
-    cur.execute("SELECT id, symbol, week_start_date, tier, otc_volume, total_trades, total_market_volume, dark_pool_share_pct FROM finra_otc_volume")
+    cur.execute(
+        "SELECT id, symbol, week_start_date, tier, otc_volume, total_trades, total_market_volume, dark_pool_share_pct FROM finra_otc_volume"
+    )
     total = 0
     async with pg_pool.acquire() as conn:
         while True:
@@ -437,16 +444,18 @@ async def _sync_finra_otc_volume(sqlite_conn: sqlite3.Connection, pg_pool: Any, 
                 w_date = _parse_date(r["week_start_date"])
                 if w_date is None:
                     continue
-                batch.append((
-                    _clean_str(r["id"]),
-                    _clean_str(r["symbol"]),
-                    w_date,
-                    _clean_str(r["tier"]),
-                    float(r["otc_volume"] or 0),
-                    float(r["total_trades"] or 0),
-                    float(r["total_market_volume"] or 0) if r["total_market_volume"] is not None else None,
-                    float(r["dark_pool_share_pct"] or 0) if r["dark_pool_share_pct"] is not None else None,
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["id"]),
+                        _clean_str(r["symbol"]),
+                        w_date,
+                        _clean_str(r["tier"]),
+                        float(r["otc_volume"] or 0),
+                        float(r["total_trades"] or 0),
+                        float(r["total_market_volume"] or 0) if r["total_market_volume"] is not None else None,
+                        float(r["dark_pool_share_pct"] or 0) if r["dark_pool_share_pct"] is not None else None,
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -481,23 +490,25 @@ async def _sync_insider_trades(sqlite_conn: sqlite3.Connection, pg_pool: Any, ba
                 t_date = _parse_date(r["transaction_date"])
                 if f_date is None:
                     continue
-                batch.append((
-                    _clean_str(r["id"]),
-                    _clean_str(r["symbol"]),
-                    f_date,
-                    t_date,
-                    _clean_str(r["reporting_owner"]),
-                    _clean_str(r["owner_title"]),
-                    bool(r["is_director"]),
-                    bool(r["is_officer"]),
-                    bool(r["is_ten_percent"]),
-                    _clean_str(r["transaction_type"]),
-                    float(r["shares"]) if r["shares"] is not None else None,
-                    float(r["price_per_share"]) if r["price_per_share"] is not None else None,
-                    float(r["shares_owned_following"]) if r["shares_owned_following"] is not None else None,
-                    _clean_str(r["sec_form"]),
-                    _clean_str(r["filing_url"]),
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["id"]),
+                        _clean_str(r["symbol"]),
+                        f_date,
+                        t_date,
+                        _clean_str(r["reporting_owner"]),
+                        _clean_str(r["owner_title"]),
+                        bool(r["is_director"]),
+                        bool(r["is_officer"]),
+                        bool(r["is_ten_percent"]),
+                        _clean_str(r["transaction_type"]),
+                        float(r["shares"]) if r["shares"] is not None else None,
+                        float(r["price_per_share"]) if r["price_per_share"] is not None else None,
+                        float(r["shares_owned_following"]) if r["shares_owned_following"] is not None else None,
+                        _clean_str(r["sec_form"]),
+                        _clean_str(r["filing_url"]),
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -531,20 +542,22 @@ async def _sync_institutional_holdings(sqlite_conn: sqlite3.Connection, pg_pool:
                 q_date = _parse_date(r["report_calendar_or_quarter"])
                 if q_date is None:
                     continue
-                batch.append((
-                    _clean_str(r["id"]),
-                    _clean_str(r["cik"]),
-                    _clean_str(r["institution_name"]),
-                    q_date,
-                    _clean_str(r["symbol"]),
-                    _clean_str(r["cusip"]),
-                    float(r["shares"] or 0),
-                    float(r["market_value"]) if r["market_value"] is not None else None,
-                    _clean_str(r["investment_discretion"]),
-                    float(r["voting_authority_sole"]) if r["voting_authority_sole"] is not None else None,
-                    _clean_str(r["sec_form"]),
-                    _clean_str(r["filing_url"]),
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["id"]),
+                        _clean_str(r["cik"]),
+                        _clean_str(r["institution_name"]),
+                        q_date,
+                        _clean_str(r["symbol"]),
+                        _clean_str(r["cusip"]),
+                        float(r["shares"] or 0),
+                        float(r["market_value"]) if r["market_value"] is not None else None,
+                        _clean_str(r["investment_discretion"]),
+                        float(r["voting_authority_sole"]) if r["voting_authority_sole"] is not None else None,
+                        _clean_str(r["sec_form"]),
+                        _clean_str(r["filing_url"]),
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -591,18 +604,20 @@ async def _sync_stock_bars_daily(
                 t_date = _parse_date(r["trade_date"])
                 if t_date is None:
                     continue
-                batch.append((
-                    _clean_str(r["symbol"]),
-                    t_date,
-                    float(r["open"]),
-                    float(r["high"]),
-                    float(r["low"]),
-                    float(r["close"]),
-                    float(r["adjusted_close"]),
-                    int(r["volume"]),
-                    float(r["dividend_amount"] or 0.0),
-                    float(r["split_coefficient"] or 1.0),
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["symbol"]),
+                        t_date,
+                        float(r["open"]),
+                        float(r["high"]),
+                        float(r["low"]),
+                        float(r["close"]),
+                        float(r["adjusted_close"]),
+                        int(r["volume"]),
+                        float(r["dividend_amount"] or 0.0),
+                        float(r["split_coefficient"] or 1.0),
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -647,16 +662,18 @@ async def _sync_stock_bars_intraday(
                 # SQLite keeps the vendor's US/Eastern wall-clock string; give the
                 # instant its zone before it reaches TIMESTAMPTZ.
                 b_ts = as_vendor_eastern(b_ts)
-                batch.append((
-                    _clean_str(r["symbol"]),
-                    b_ts,
-                    _clean_str(r["interval"]),
-                    float(r["open"]),
-                    float(r["high"]),
-                    float(r["low"]),
-                    float(r["close"]),
-                    int(r["volume"]),
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["symbol"]),
+                        b_ts,
+                        _clean_str(r["interval"]),
+                        float(r["open"]),
+                        float(r["high"]),
+                        float(r["low"]),
+                        float(r["close"]),
+                        int(r["volume"]),
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -716,26 +733,28 @@ async def _sync_options_chains_eod(
                 exp_date = _parse_date(r["expiration"])
                 if t_date is None or exp_date is None:
                     continue
-                batch.append((
-                    _clean_str(r["contract_id"]),
-                    _clean_str(r["symbol"]),
-                    t_date,
-                    exp_date,
-                    float(r["strike"]),
-                    _clean_str(r["option_type"]),
-                    float(r["last_price"]) if r["last_price"] is not None else None,
-                    float(r["mark_price"]) if r["mark_price"] is not None else None,
-                    float(r["bid"]) if r["bid"] is not None else None,
-                    float(r["ask"]) if r["ask"] is not None else None,
-                    optional_int(r["volume"]),
-                    optional_int(r["open_interest"]),
-                    float(r["implied_volatility"]) if r["implied_volatility"] is not None else None,
-                    float(r["delta"]) if r["delta"] is not None else None,
-                    float(r["gamma"]) if r["gamma"] is not None else None,
-                    float(r["theta"]) if r["theta"] is not None else None,
-                    float(r["vega"]) if r["vega"] is not None else None,
-                    float(r["rho"]) if r["rho"] is not None else None,
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["contract_id"]),
+                        _clean_str(r["symbol"]),
+                        t_date,
+                        exp_date,
+                        float(r["strike"]),
+                        _clean_str(r["option_type"]),
+                        float(r["last_price"]) if r["last_price"] is not None else None,
+                        float(r["mark_price"]) if r["mark_price"] is not None else None,
+                        float(r["bid"]) if r["bid"] is not None else None,
+                        float(r["ask"]) if r["ask"] is not None else None,
+                        optional_int(r["volume"]),
+                        optional_int(r["open_interest"]),
+                        float(r["implied_volatility"]) if r["implied_volatility"] is not None else None,
+                        float(r["delta"]) if r["delta"] is not None else None,
+                        float(r["gamma"]) if r["gamma"] is not None else None,
+                        float(r["theta"]) if r["theta"] is not None else None,
+                        float(r["vega"]) if r["vega"] is not None else None,
+                        float(r["rho"]) if r["rho"] is not None else None,
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -762,13 +781,15 @@ async def _sync_company_fundamentals(sqlite_conn: sqlite3.Connection, pg_pool: A
                 break
             batch = []
             for r in rows:
-                batch.append((
-                    _clean_str(r["symbol"]),
-                    _clean_str(r["fiscal_date_ending"]),
-                    _clean_str(r["report_type"]),
-                    _clean_str(r["period_type"]),
-                    r["data_json"],
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["symbol"]),
+                        _clean_str(r["fiscal_date_ending"]),
+                        _clean_str(r["report_type"]),
+                        _clean_str(r["period_type"]),
+                        r["data_json"],
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -787,7 +808,9 @@ async def _sync_corporate_dividends(sqlite_conn: sqlite3.Connection, pg_pool: An
         amount = EXCLUDED.amount
     """
     cur = sqlite_conn.cursor()
-    cur.execute("SELECT symbol, ex_dividend_date, declaration_date, record_date, payment_date, amount FROM corporate_dividends")
+    cur.execute(
+        "SELECT symbol, ex_dividend_date, declaration_date, record_date, payment_date, amount FROM corporate_dividends"
+    )
     total = 0
     async with pg_pool.acquire() as conn:
         while True:
@@ -799,14 +822,16 @@ async def _sync_corporate_dividends(sqlite_conn: sqlite3.Connection, pg_pool: An
                 ex_d = _parse_date(r["ex_dividend_date"])
                 if ex_d is None:
                     continue
-                batch.append((
-                    _clean_str(r["symbol"]),
-                    ex_d,
-                    _parse_date(r["declaration_date"]),
-                    _parse_date(r["record_date"]),
-                    _parse_date(r["payment_date"]),
-                    float(r["amount"]),
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["symbol"]),
+                        ex_d,
+                        _parse_date(r["declaration_date"]),
+                        _parse_date(r["record_date"]),
+                        _parse_date(r["payment_date"]),
+                        float(r["amount"]),
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -834,11 +859,13 @@ async def _sync_corporate_splits(sqlite_conn: sqlite3.Connection, pg_pool: Any, 
                 eff_d = _parse_date(r["effective_date"])
                 if eff_d is None:
                     continue
-                batch.append((
-                    _clean_str(r["symbol"]),
-                    eff_d,
-                    float(r["split_factor"]),
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["symbol"]),
+                        eff_d,
+                        float(r["split_factor"]),
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -861,7 +888,9 @@ async def _sync_etf_profiles(sqlite_conn: sqlite3.Connection, pg_pool: Any, batc
         updated_at = NOW()
     """
     cur = sqlite_conn.cursor()
-    cur.execute("SELECT symbol, net_assets, portfolio_turnover, dividend_yield, expense_ratio, holdings_json, sectors_json FROM etf_profiles")
+    cur.execute(
+        "SELECT symbol, net_assets, portfolio_turnover, dividend_yield, expense_ratio, holdings_json, sectors_json FROM etf_profiles"
+    )
     total = 0
     async with pg_pool.acquire() as conn:
         while True:
@@ -870,15 +899,17 @@ async def _sync_etf_profiles(sqlite_conn: sqlite3.Connection, pg_pool: Any, batc
                 break
             batch = []
             for r in rows:
-                batch.append((
-                    _clean_str(r["symbol"]),
-                    float(r["net_assets"]) if r["net_assets"] is not None else None,
-                    float(r["portfolio_turnover"]) if r["portfolio_turnover"] is not None else None,
-                    float(r["dividend_yield"]) if r["dividend_yield"] is not None else None,
-                    float(r["expense_ratio"]) if r["expense_ratio"] is not None else None,
-                    r["holdings_json"],
-                    r["sectors_json"],
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["symbol"]),
+                        float(r["net_assets"]) if r["net_assets"] is not None else None,
+                        float(r["portfolio_turnover"]) if r["portfolio_turnover"] is not None else None,
+                        float(r["dividend_yield"]) if r["dividend_yield"] is not None else None,
+                        float(r["expense_ratio"]) if r["expense_ratio"] is not None else None,
+                        r["holdings_json"],
+                        r["sectors_json"],
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
@@ -909,17 +940,18 @@ async def _sync_listing_status(sqlite_conn: sqlite3.Connection, pg_pool: Any, ba
                 break
             batch = []
             for r in rows:
-                batch.append((
-                    _clean_str(r["symbol"]),
-                    _clean_str(r["name"]),
-                    _clean_str(r["exchange"]),
-                    _clean_str(r["asset_type"]),
-                    _parse_date(r["ipo_date"]),
-                    _parse_date(r["delisting_date"]),
-                    _clean_str(r["status"]) or "Active",
-                ))
+                batch.append(
+                    (
+                        _clean_str(r["symbol"]),
+                        _clean_str(r["name"]),
+                        _clean_str(r["exchange"]),
+                        _clean_str(r["asset_type"]),
+                        _parse_date(r["ipo_date"]),
+                        _parse_date(r["delisting_date"]),
+                        _clean_str(r["status"]) or "Active",
+                    )
+                )
             if batch:
                 await conn.executemany(query, batch)
                 total += len(batch)
     return total
-

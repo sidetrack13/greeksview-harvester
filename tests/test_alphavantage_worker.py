@@ -21,13 +21,14 @@ from harvester.workers.alphavantage.pacer import (
     AlphaVantagePacer,
     is_burst_notice,
 )
-from harvester.workers.alphavantage.worker import AlphaVantageWorker
+from harvester.workers.alphavantage.worker import AlphaVantageWorker, HarvestReport
 
 runner = CliRunner()
 
 # ---------------------------------------------------------------------------
 # 1. Pacer Unit Tests
 # ---------------------------------------------------------------------------
+
 
 def test_is_burst_notice():
     assert is_burst_notice("Burst pattern detected. Please consider spreading out your API requests...")
@@ -89,6 +90,7 @@ async def test_pacer_max_wait_refused():
 # 2. Client Unit Tests
 # ---------------------------------------------------------------------------
 
+
 def test_scrub_removes_api_key():
     secret = "MY_ALPHA_VANTAGE_SECRET_KEY_123"
     url = f"https://www.alphavantage.co/query?function=OVERVIEW&apikey={secret}&symbol=IBM"
@@ -110,7 +112,9 @@ def test_detect_failure():
     assert f_burst["label"] == "burst"
 
     # 3. Throttle in Information
-    info_data = {"Information": "Thank you for using Alpha Vantage. Our standard API call frequency is 5 calls per minute"}
+    info_data = {
+        "Information": "Thank you for using Alpha Vantage. Our standard API call frequency is 5 calls per minute"
+    }
     f_info = detect_failure(info_data)
     assert f_info["status"] == 429
     assert f_info["label"] == "throttle"
@@ -177,6 +181,7 @@ async def test_client_error_handling():
 # ---------------------------------------------------------------------------
 # 3. Worker & DB Persistence Unit Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_worker_metadata_and_health(tmp_path):
@@ -347,12 +352,19 @@ async def test_worker_real_flow_with_json_mocks(tmp_path):
         elif function == "SPLITS":
             return splits_mock
         elif function == "ETF_PROFILE":
-            return {"net_assets": 500000000, "portfolio_turnover": 0.05, "dividend_yield": 0.015, "expense_ratio": 0.001}
+            return {
+                "net_assets": 500000000,
+                "portfolio_turnover": 0.05,
+                "dividend_yield": 0.015,
+                "expense_ratio": 0.001,
+            }
         return {}
 
     async def mock_fetch_csv(function, params=None, is_background=True):
         if function == "LISTING_STATUS":
-            return [{"symbol": "SPY", "name": "SPDR S&P 500", "exchange": "NYSE", "assetType": "ETF", "status": "Active"}]
+            return [
+                {"symbol": "SPY", "name": "SPDR S&P 500", "exchange": "NYSE", "assetType": "ETF", "status": "Active"}
+            ]
         return []
 
     worker.client.fetch_json = mock_fetch_json
@@ -362,6 +374,17 @@ async def test_worker_real_flow_with_json_mocks(tmp_path):
         await db.initialize_tables()
         h_d, u_d = await worker.download_daily_bars(db, ["SPY"], use_mock=False)
         assert h_d == 1 and u_d == 1
+
+        # Test daily bars error handling on invalid symbol
+        async def mock_fetch_json_err(function, params=None, is_background=True):
+            raise AlphaVantageError("Invalid symbol", status=404, label="invalid_symbol")
+
+        worker.client.fetch_json = mock_fetch_json_err
+        rep_err = HarvestReport()
+        h_err, u_err = await worker.download_daily_bars(db, ["INVALID"], use_mock=False, report=rep_err)
+        assert h_err == 0 and u_err == 0
+        assert any("TIME_SERIES_DAILY_ADJUSTED INVALID" in e for e in rep_err.fetch_errors)
+        worker.client.fetch_json = mock_fetch_json
 
         h_i, u_i = await worker.download_intraday_bars(db, ["SPY"], use_mock=False)
         assert h_i == 1 and u_i == 1
@@ -388,6 +411,7 @@ async def test_worker_real_flow_with_json_mocks(tmp_path):
 # ---------------------------------------------------------------------------
 # 4. CLI Execution Test
 # ---------------------------------------------------------------------------
+
 
 def test_cli_run_alphavantage_mock():
     runner = CliRunner()
@@ -429,7 +453,7 @@ async def test_worker_error_recovery(tmp_path):
 @pytest.mark.asyncio
 async def test_client_internal_lifecycle_and_retry():
     client = AlphaVantageClient(api_key="TEST_KEY", timeout_seconds=10.0)
-    
+
     # Test internal client creation & close
     http = await client.get_client()
     assert http is not None
@@ -441,7 +465,17 @@ def test_cli_run_alphavantage_with_api_key(tmp_path) -> None:
     db_file = str(tmp_path / "cli_key.db")
     result = runner.invoke(
         app,
-        ["run", "alphavantage", "--mock", "--symbols", "SPY", "--api-key", "CUSTOM_KEY", "--db-url", f"sqlite:///{db_file}"],
+        [
+            "run",
+            "alphavantage",
+            "--mock",
+            "--symbols",
+            "SPY",
+            "--api-key",
+            "CUSTOM_KEY",
+            "--db-url",
+            f"sqlite:///{db_file}",
+        ],
     )
     assert result.exit_code == 0
     assert "SUCCESS" in result.stdout
@@ -459,7 +493,9 @@ async def test_download_historical_options_days_back(tmp_path):
         assert h > 6
         assert u == h
 
-        async with db._sqlite_conn.execute("SELECT COUNT(DISTINCT trade_date), COUNT(*) FROM options_chains_eod") as cur:
+        async with db._sqlite_conn.execute(
+            "SELECT COUNT(DISTINCT trade_date), COUNT(*) FROM options_chains_eod"
+        ) as cur:
             row = await cur.fetchone()
             num_dates, total_rows = row[0], row[1]
             assert num_dates >= 3
@@ -470,7 +506,19 @@ def test_cli_run_alphavantage_days_back(tmp_path) -> None:
     db_file = str(tmp_path / "cli_days_back.db")
     result = runner.invoke(
         app,
-        ["run", "alphavantage", "--mock", "--dataset", "options", "--symbols", "SPY", "--days-back", "5", "--db-url", f"sqlite:///{db_file}"],
+        [
+            "run",
+            "alphavantage",
+            "--mock",
+            "--dataset",
+            "options",
+            "--symbols",
+            "SPY",
+            "--days-back",
+            "5",
+            "--db-url",
+            f"sqlite:///{db_file}",
+        ],
     )
     assert result.exit_code == 0
     assert "SUCCESS" in result.stdout
@@ -491,7 +539,9 @@ async def test_download_historical_options_moneyness_filter(tmp_path):
         assert h > 0
         assert u == h
 
-        async with db._sqlite_conn.execute("SELECT COUNT(DISTINCT trade_date), COUNT(*) FROM options_chains_eod") as cur:
+        async with db._sqlite_conn.execute(
+            "SELECT COUNT(DISTINCT trade_date), COUNT(*) FROM options_chains_eod"
+        ) as cur:
             row = await cur.fetchone()
             num_dates, total_rows = row[0], row[1]
             assert total_rows == num_dates * 6
@@ -506,13 +556,13 @@ async def test_download_historical_options_prune_inactive(tmp_path):
     async with DatabaseManager(settings) as db:
         await db.initialize_tables()
         # prune_inactive removes strike 600.0 (vol=0, oi=0), keeping 4 strikes * 2 types = 8 per date
-        h, u = await worker.download_historical_options(
-            db, ["SPY"], days_back=3, prune_inactive=True, use_mock=True
-        )
+        h, u = await worker.download_historical_options(db, ["SPY"], days_back=3, prune_inactive=True, use_mock=True)
         assert h > 0
         assert u == h
 
-        async with db._sqlite_conn.execute("SELECT COUNT(DISTINCT trade_date), COUNT(*) FROM options_chains_eod") as cur:
+        async with db._sqlite_conn.execute(
+            "SELECT COUNT(DISTINCT trade_date), COUNT(*) FROM options_chains_eod"
+        ) as cur:
             row = await cur.fetchone()
             num_dates, total_rows = row[0], row[1]
             assert total_rows == num_dates * 8
@@ -521,6 +571,7 @@ async def test_download_historical_options_prune_inactive(tmp_path):
 @pytest.mark.asyncio
 async def test_db_options_archive_and_prune(tmp_path):
     import gzip
+
     db_file = str(tmp_path / "archive_test.db")
     settings = Settings(database_url=f"sqlite:///{db_file}")
     worker = AlphaVantageWorker(settings=settings)
@@ -541,16 +592,20 @@ async def test_db_options_archive_and_prune(tmp_path):
             assert "contract_id,symbol,trade_date" in lines[0]
 
         # Test stock close lookup
-        await db.upsert_stock_bars_daily([{
-            "symbol": "SPY",
-            "trade_date": "2026-09-14",
-            "open": 450.0,
-            "high": 455.0,
-            "low": 448.0,
-            "close": 452.5,
-            "adjusted_close": 452.5,
-            "volume": 50000000,
-        }])
+        await db.upsert_stock_bars_daily(
+            [
+                {
+                    "symbol": "SPY",
+                    "trade_date": "2026-09-14",
+                    "open": 450.0,
+                    "high": 455.0,
+                    "low": 448.0,
+                    "close": 452.5,
+                    "adjusted_close": 452.5,
+                    "volume": 50000000,
+                }
+            ]
+        )
         close_price = await db.get_stock_close("SPY", "2026-09-14")
         assert close_price == 452.5
         assert await db.get_stock_close("NONEXIST", "2026-09-14") is None
@@ -569,10 +624,20 @@ def test_cli_archive_options_and_storage_flags(tmp_path):
     res_run = runner.invoke(
         app,
         [
-            "run", "alphavantage", "--mock", "--dataset", "options",
-            "--symbols", "SPY", "--days-back", "3",
-            "--moneyness-band", "15", "--prune-inactive",
-            "--db-url", f"sqlite:///{db_file}",
+            "run",
+            "alphavantage",
+            "--mock",
+            "--dataset",
+            "options",
+            "--symbols",
+            "SPY",
+            "--days-back",
+            "3",
+            "--moneyness-band",
+            "15",
+            "--prune-inactive",
+            "--db-url",
+            f"sqlite:///{db_file}",
         ],
     )
     assert res_run.exit_code == 0
@@ -588,13 +653,16 @@ def test_cli_archive_options_and_storage_flags(tmp_path):
     res_archive = runner.invoke(
         app,
         [
-            "archive-options", "--days-to-keep", "0",
-            "--output-dir", archive_dir, "--prune",
-            "--db-url", f"sqlite:///{db_file}",
+            "archive-options",
+            "--days-to-keep",
+            "0",
+            "--output-dir",
+            archive_dir,
+            "--prune",
+            "--db-url",
+            f"sqlite:///{db_file}",
         ],
     )
     assert res_archive.exit_code == 0
     assert "Options Archival & Pruning Summary" in res_archive.stdout
     assert "Records Exported" in res_archive.stdout
-
-

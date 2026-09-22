@@ -124,7 +124,13 @@ def intraday_payload(interval: str, bars: dict[str, dict[str, Any]]) -> dict[str
 
 
 def intraday_bar(close: str, **overrides: Any) -> dict[str, Any]:
-    bar: dict[str, Any] = {"1. open": "20.00", "2. high": "20.50", "3. low": "19.50", "4. close": close, "5. volume": "700"}
+    bar: dict[str, Any] = {
+        "1. open": "20.00",
+        "2. high": "20.50",
+        "3. low": "19.50",
+        "4. close": close,
+        "5. volume": "700",
+    }
     bar.update(overrides)
     return {k: v for k, v in bar.items() if v is not _ABSENT}
 
@@ -261,7 +267,9 @@ def test_cli_run_summary_reports_asked_and_got_dates(fresh_cli_settings: Path) -
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params["function"] == "HISTORICAL_OPTIONS"
         assert request.url.params["date"] == "2026-07-03"
-        return httpx.Response(200, json=options_payload([option_row("ZZZT260821C00020000", "20.00", "call", "2026-07-02")]))
+        return httpx.Response(
+            200, json=options_payload([option_row("ZZZT260821C00020000", "20.00", "call", "2026-07-02")])
+        )
 
     db_file = fresh_cli_settings / "cli_dates.db"
     with respx.mock(assert_all_called=True) as router:
@@ -269,8 +277,18 @@ def test_cli_run_summary_reports_asked_and_got_dates(fresh_cli_settings: Path) -
         result = runner.invoke(
             app,
             [
-                "run", "alphavantage", "--dataset", "options", "--symbols", SYM,
-                "--trade-dates", "2026-07-03", "--api-key", "TESTKEY", "--db-url", f"sqlite:///{db_file}",
+                "run",
+                "alphavantage",
+                "--dataset",
+                "options",
+                "--symbols",
+                SYM,
+                "--trade-dates",
+                "2026-07-03",
+                "--api-key",
+                "TESTKEY",
+                "--db-url",
+                f"sqlite:///{db_file}",
             ],
         )
 
@@ -356,9 +374,12 @@ async def test_upsert_keeps_null_counts_on_a_table_created_with_the_old_default(
     """Existing tables keep DEFAULT 0 (CREATE TABLE IF NOT EXISTS is a no-op), so the
     insert must pass NULL explicitly rather than rely on the new DDL."""
     db_file = tmp_path / "old_default.db"
-    old_ddl = _create_table_block(SQLITE_SCHEMA, "options_chains_eod").replace(
-        "volume INTEGER,", "volume INTEGER DEFAULT 0,"
-    ).replace("open_interest INTEGER,", "open_interest INTEGER DEFAULT 0,") + ");"
+    old_ddl = (
+        _create_table_block(SQLITE_SCHEMA, "options_chains_eod")
+        .replace("volume INTEGER,", "volume INTEGER DEFAULT 0,")
+        .replace("open_interest INTEGER,", "open_interest INTEGER DEFAULT 0,")
+        + ");"
+    )
     assert "DEFAULT 0" in old_ddl
     conn = sqlite3.connect(db_file)
     conn.execute(old_ddl)
@@ -366,8 +387,12 @@ async def test_upsert_keeps_null_counts_on_a_table_created_with_the_old_default(
     conn.close()
 
     record = {
-        "contract_id": "ZZZT260821C00020000", "symbol": SYM, "trade_date": "2026-07-02",
-        "expiration": "2026-08-21", "strike": 20.0, "option_type": "call",
+        "contract_id": "ZZZT260821C00020000",
+        "symbol": SYM,
+        "trade_date": "2026-07-02",
+        "expiration": "2026-08-21",
+        "strike": 20.0,
+        "option_type": "call",
     }
     async with DatabaseManager(Settings(_env_file=None, database_url=f"sqlite:///{db_file}")) as db:
         assert await db.upsert_options_chains_eod([record]) == 1
@@ -379,13 +404,34 @@ async def test_postgres_upsert_binds_null_counts() -> None:
     pool = FakePgPool()
     db._pg_pool = pool  # type: ignore[assignment]
     records = [
-        {"contract_id": "C_UNKNOWN", "symbol": SYM, "trade_date": "2026-07-02", "expiration": "2026-08-21",
-         "strike": 20.0, "option_type": "call", "volume": None, "open_interest": None},
-        {"contract_id": "C_ZERO", "symbol": SYM, "trade_date": "2026-07-02", "expiration": "2026-08-21",
-         "strike": 30.0, "option_type": "put", "volume": 0, "open_interest": 0},
+        {
+            "contract_id": "C_UNKNOWN",
+            "symbol": SYM,
+            "trade_date": "2026-07-02",
+            "expiration": "2026-08-21",
+            "strike": 20.0,
+            "option_type": "call",
+            "volume": None,
+            "open_interest": None,
+        },
+        {
+            "contract_id": "C_ZERO",
+            "symbol": SYM,
+            "trade_date": "2026-07-02",
+            "expiration": "2026-08-21",
+            "strike": 30.0,
+            "option_type": "put",
+            "volume": 0,
+            "open_interest": 0,
+        },
     ]
     assert await db.upsert_options_chains_eod(records) == 2
-    bound = [(args[0], args[10], args[11]) for q, args in pool.conn.executed if "options_chains_eod" in q]
+    bound = [
+        (row[0], row[10], row[11])
+        for q, batch in pool.conn.executemany_calls
+        if "options_chains_eod" in q
+        for row in batch
+    ]
     assert bound == [("C_UNKNOWN", None, None), ("C_ZERO", 0, 0)]
 
 
@@ -421,7 +467,9 @@ async def test_sync_pushes_null_counts_as_null_and_zero_as_zero(tmp_path: Path) 
     base = (SYM, "2026-07-02", "2026-08-21", 20.0, "call", 1.1, 1.15, 1.1, 1.2)
     greeks = (0.41, 0.5, 0.05, -0.02, 0.03, 0.01)
     _sqlite_with_table(
-        db_file, "options_chains_eod", cols,
+        db_file,
+        "options_chains_eod",
+        cols,
         [("C_UNKNOWN", *base, None, None, *greeks), ("C_ZERO", *base, 0, 0, *greeks)],
     )
     pool = await _sync_with_fake_pool(db_file, ["options_chains_eod"])
@@ -513,10 +561,20 @@ async def test_band_uses_the_close_of_the_rows_own_session(tmp_path: Path) -> No
 
     async with DatabaseManager(worker.settings) as db:
         # A close exists only for the session the vendor answered with (2026-07-02).
-        await db.upsert_stock_bars_daily([{
-            "symbol": SYM, "trade_date": "2026-07-02", "open": 19.0, "high": 21.0, "low": 18.0,
-            "close": 20.0, "adjusted_close": 20.0, "volume": 1000,
-        }])
+        await db.upsert_stock_bars_daily(
+            [
+                {
+                    "symbol": SYM,
+                    "trade_date": "2026-07-02",
+                    "open": 19.0,
+                    "high": 21.0,
+                    "low": 18.0,
+                    "close": 20.0,
+                    "adjusted_close": 20.0,
+                    "volume": 1000,
+                }
+            ]
+        )
         await worker.download_historical_options(
             db, [SYM], trade_dates=["2026-07-03"], moneyness_band_pct=10.0, report=report
         )
@@ -574,8 +632,16 @@ def test_parse_trade_dates_rejects_non_dates(bad: str) -> None:
 async def test_stored_sessions_are_the_symbols_daily_bar_dates(tmp_path: Path) -> None:
     async with DatabaseManager(Settings(_env_file=None, database_url=f"sqlite:///{tmp_path / 's.db'}")) as db:
         bars = [
-            {"symbol": s, "trade_date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0,
-             "adjusted_close": 1.0, "volume": 1}
+            {
+                "symbol": s,
+                "trade_date": d,
+                "open": 1.0,
+                "high": 1.0,
+                "low": 1.0,
+                "close": 1.0,
+                "adjusted_close": 1.0,
+                "volume": 1,
+            }
             for s, d in [(SYM, "2026-07-06"), (SYM, "2026-07-01"), (SYM, "2026-07-02"), ("ZZZQ", "2026-07-03")]
         ]
         await db.upsert_stock_bars_daily(bars)
@@ -602,11 +668,21 @@ async def test_run_once_sessions_from_asks_exactly_the_stored_sessions(tmp_path:
     db_file = tmp_path / "sessions_from.db"
     worker = AlphaVantageWorker(settings=fast_settings(db_file))
     async with DatabaseManager(worker.settings) as db:
-        await db.upsert_stock_bars_daily([
-            {"symbol": SYM, "trade_date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0,
-             "adjusted_close": 1.0, "volume": 1}
-            for d in ("2026-07-01", "2026-07-02", "2026-07-06")
-        ])
+        await db.upsert_stock_bars_daily(
+            [
+                {
+                    "symbol": SYM,
+                    "trade_date": d,
+                    "open": 1.0,
+                    "high": 1.0,
+                    "low": 1.0,
+                    "close": 1.0,
+                    "adjusted_close": 1.0,
+                    "volume": 1,
+                }
+                for d in ("2026-07-01", "2026-07-02", "2026-07-06")
+            ]
+        )
     fetch = RecordingFetch(lambda fn, p: options_payload([option_row("C1", "20.00", "call", p["date"])]))
     worker.client.fetch_json = fetch
 
@@ -634,14 +710,28 @@ def test_cli_trade_dates_from_file_are_the_dates_requested(fresh_cli_settings: P
 
     def handler(request: httpx.Request) -> httpx.Response:
         asked.append(request.url.params["date"])
-        return httpx.Response(200, json=options_payload([option_row("C1", "20.00", "call", request.url.params["date"])]))
+        return httpx.Response(
+            200, json=options_payload([option_row("C1", "20.00", "call", request.url.params["date"])])
+        )
 
     with respx.mock(assert_all_called=True) as router:
         router.get(AV_URL).mock(side_effect=handler)
         result = runner.invoke(
             app,
-            ["run", "alphavantage", "--dataset", "options", "--symbols", SYM, "--trade-dates", "@sessions.txt",
-             "--api-key", "TESTKEY", "--db-url", "sqlite:///cli_file.db"],
+            [
+                "run",
+                "alphavantage",
+                "--dataset",
+                "options",
+                "--symbols",
+                SYM,
+                "--trade-dates",
+                "@sessions.txt",
+                "--api-key",
+                "TESTKEY",
+                "--db-url",
+                "sqlite:///cli_file.db",
+            ],
         )
 
     assert result.exit_code == 0, result.output
@@ -650,7 +740,8 @@ def test_cli_trade_dates_from_file_are_the_dates_requested(fresh_cli_settings: P
 
 def test_cli_rejects_a_malformed_trade_date(fresh_cli_settings: Path) -> None:
     result = runner.invoke(
-        app, ["run", "alphavantage", "--dataset", "options", "--trade-dates", "2026-13-01", "--db-url", "sqlite:///x.db"]
+        app,
+        ["run", "alphavantage", "--dataset", "options", "--trade-dates", "2026-13-01", "--db-url", "sqlite:///x.db"],
     )
     assert result.exit_code == 1
     assert "Not a YYYY-MM-DD date: 2026-13-01" in flat(result.stdout)
@@ -667,7 +758,9 @@ async def test_intraday_requests_every_month_full_and_unadjusted(tmp_path: Path)
 
     def responder(fn: str, p: dict[str, Any]) -> dict[str, Any]:
         day = "2026-05-29" if p["month"] == "2026-05" else "2026-06-30"
-        return intraday_payload("1min", {f"{day} 08:30:00": intraday_bar("20.10"), f"{day} 09:31:00": intraday_bar("20.20")})
+        return intraday_payload(
+            "1min", {f"{day} 08:30:00": intraday_bar("20.10"), f"{day} 09:31:00": intraday_bar("20.20")}
+        )
 
     fetch = RecordingFetch(responder)
     worker.client.fetch_json = fetch
@@ -676,10 +769,28 @@ async def test_intraday_requests_every_month_full_and_unadjusted(tmp_path: Path)
         h, u = await worker.download_intraday_bars(db, [SYM], interval="1min", months=["2026-05", "2026-06"])
 
     assert fetch.calls == [
-        ("TIME_SERIES_INTRADAY", {"symbol": SYM, "interval": "1min", "outputsize": "full", "adjusted": "false",
-                                  "extended_hours": "true", "month": "2026-05"}),
-        ("TIME_SERIES_INTRADAY", {"symbol": SYM, "interval": "1min", "outputsize": "full", "adjusted": "false",
-                                  "extended_hours": "true", "month": "2026-06"}),
+        (
+            "TIME_SERIES_INTRADAY",
+            {
+                "symbol": SYM,
+                "interval": "1min",
+                "outputsize": "full",
+                "adjusted": "false",
+                "extended_hours": "true",
+                "month": "2026-05",
+            },
+        ),
+        (
+            "TIME_SERIES_INTRADAY",
+            {
+                "symbol": SYM,
+                "interval": "1min",
+                "outputsize": "full",
+                "adjusted": "false",
+                "extended_hours": "true",
+                "month": "2026-06",
+            },
+        ),
     ]
     assert (h, u) == (4, 4)
     stamps = [r[0] for r in rows(db_file, "SELECT bar_timestamp FROM stock_bars_intraday ORDER BY bar_timestamp")]
@@ -713,7 +824,9 @@ async def test_intraday_bar_missing_a_field_is_skipped_not_zeroed(tmp_path: Path
         h, _ = await worker.download_intraday_bars(db, [SYM], interval="1min", months=["2026-06"], report=report)
 
     assert h == 1
-    assert rows(db_file, "SELECT bar_timestamp, open, volume FROM stock_bars_intraday") == [("2026-06-30 09:33:00", 20.0, 700)]
+    assert rows(db_file, "SELECT bar_timestamp, open, volume FROM stock_bars_intraday") == [
+        ("2026-06-30 09:33:00", 20.0, 700)
+    ]
     assert report.skipped["intraday_missing_field"] == 2
     assert report.skipped["intraday_malformed_timestamp"] == 1
 
@@ -739,8 +852,23 @@ def test_cli_intraday_options_reach_the_request(fresh_cli_settings: Path) -> Non
         router.get(AV_URL).mock(side_effect=handler)
         result = runner.invoke(
             app,
-            ["run", "alphavantage", "--dataset", "intraday", "--symbols", SYM, "--interval", "1min",
-             "--months", "2026-05,2026-06", "--no-extended-hours", "--api-key", "TESTKEY", "--db-url", "sqlite:///i.db"],
+            [
+                "run",
+                "alphavantage",
+                "--dataset",
+                "intraday",
+                "--symbols",
+                SYM,
+                "--interval",
+                "1min",
+                "--months",
+                "2026-05,2026-06",
+                "--no-extended-hours",
+                "--api-key",
+                "TESTKEY",
+                "--db-url",
+                "sqlite:///i.db",
+            ],
         )
 
     assert result.exit_code == 0, result.output
@@ -777,8 +905,20 @@ def test_cli_daily_outputsize_full(fresh_cli_settings: Path) -> None:
         router.get(AV_URL).mock(side_effect=handler)
         result = runner.invoke(
             app,
-            ["run", "alphavantage", "--dataset", "daily", "--symbols", SYM, "--outputsize", "full",
-             "--api-key", "TESTKEY", "--db-url", "sqlite:///d.db"],
+            [
+                "run",
+                "alphavantage",
+                "--dataset",
+                "daily",
+                "--symbols",
+                SYM,
+                "--outputsize",
+                "full",
+                "--api-key",
+                "TESTKEY",
+                "--db-url",
+                "sqlite:///d.db",
+            ],
         )
     assert result.exit_code == 0, result.output
     assert seen == ["full"]
@@ -841,7 +981,8 @@ def test_as_vendor_eastern_applies_the_dst_offset_of_the_date() -> None:
 async def test_sync_sends_intraday_bars_as_eastern_instants(tmp_path: Path) -> None:
     db_file = tmp_path / "sync_tz.db"
     _sqlite_with_table(
-        db_file, "stock_bars_intraday",
+        db_file,
+        "stock_bars_intraday",
         "symbol TEXT, bar_timestamp TEXT, interval TEXT, open REAL, high REAL, low REAL, close REAL, volume INTEGER",
         [
             (SYM, "2026-06-02 09:31:00", "1min", 20.0, 20.5, 19.5, 20.2, 700),
@@ -863,12 +1004,25 @@ async def test_direct_postgres_intraday_upsert_sends_eastern_instants() -> None:
     pool = FakePgPool()
     db._pg_pool = pool  # type: ignore[assignment]
     bars = [
-        {"symbol": SYM, "bar_timestamp": ts, "interval": "1min", "open": 20.0, "high": 20.5,
-         "low": 19.5, "close": 20.2, "volume": 700}
+        {
+            "symbol": SYM,
+            "bar_timestamp": ts,
+            "interval": "1min",
+            "open": 20.0,
+            "high": 20.5,
+            "low": 19.5,
+            "close": 20.2,
+            "volume": 700,
+        }
         for ts in ("2026-06-02 09:31:00", "2026-01-06 09:31:00")
     ]
     assert await db.upsert_stock_bars_intraday(bars) == 2
-    sent = [args[1].astimezone(UTC) for q, args in pool.conn.executed if "stock_bars_intraday" in q]
+    sent = [
+        row[1].astimezone(UTC)
+        for q, batch in pool.conn.executemany_calls
+        if "stock_bars_intraday" in q
+        for row in batch
+    ]
     assert sent == [datetime(2026, 6, 2, 13, 31, tzinfo=UTC), datetime(2026, 1, 6, 14, 31, tzinfo=UTC)]
 
 
@@ -925,7 +1079,9 @@ def test_default_pacing_settings_are_conservative(monkeypatch: pytest.MonkeyPatc
 
 def test_worker_pacer_takes_its_limits_from_config(tmp_path: Path) -> None:
     worker = AlphaVantageWorker(
-        settings=Settings(_env_file=None, database_url="sqlite:///:memory:", alphavantage_rpm=7, alphavantage_max_per_second=2)
+        settings=Settings(
+            _env_file=None, database_url="sqlite:///:memory:", alphavantage_rpm=7, alphavantage_max_per_second=2
+        )
     )
     assert (worker.pacer.requests_per_minute, worker.pacer.max_per_second) == (7, 2)
     assert worker.client.pacer is worker.pacer
@@ -969,7 +1125,9 @@ async def test_live_run_does_not_mark_its_file(tmp_path: Path) -> None:
 
 
 async def test_mock_run_refuses_postgres_without_connecting() -> None:
-    worker = AlphaVantageWorker(settings=Settings(_env_file=None, database_url="postgresql://u:p@pg.example.invalid:5432/x"))
+    worker = AlphaVantageWorker(
+        settings=Settings(_env_file=None, database_url="postgresql://u:p@pg.example.invalid:5432/x")
+    )
     with patch("asyncpg.create_pool", new_callable=AsyncMock) as create_pool:
         res = await worker.run_once(dataset="daily", symbols=[SYM], use_mock=True)
     assert res.status == "failed"
@@ -987,7 +1145,9 @@ async def test_sync_refuses_a_mock_written_file_before_connecting(tmp_path: Path
         pytest.raises(MockDatabaseRefusedError),
     ):
         await sync_sqlite_to_postgres(
-            pg_url="postgresql://u:p@pg.example.invalid:5432/x", sqlite_path=str(db_file), settings=Settings(_env_file=None)
+            pg_url="postgresql://u:p@pg.example.invalid:5432/x",
+            sqlite_path=str(db_file),
+            settings=Settings(_env_file=None),
         )
     create_pool.assert_not_called()
 

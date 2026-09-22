@@ -85,9 +85,7 @@ class FredMacroWorker(BaseWorker):
                 await db.initialize_tables()
 
                 for sid in target_series:
-                    meta = FRED_SERIES.get(
-                        sid, {"name": f"FRED Series {sid}", "freq": "daily", "units": "Value"}
-                    )
+                    meta = FRED_SERIES.get(sid, {"name": f"FRED Series {sid}", "freq": "daily", "units": "Value"})
                     try:
                         points = await self._fetch_or_simulate_series(
                             sid, meta, limit=effective_limit, use_mock=use_mock
@@ -142,15 +140,17 @@ class FredMacroWorker(BaseWorker):
                             try:
                                 dt = row[0].strip()
                                 val = float(row[1].strip())
-                                valid_points.append({
-                                    "id": f"{series_id}_{dt}",
-                                    "series_id": series_id,
-                                    "indicator_name": meta["name"],
-                                    "date": dt,
-                                    "value": val,
-                                    "frequency": meta["freq"],
-                                    "units": meta["units"],
-                                })
+                                valid_points.append(
+                                    {
+                                        "id": f"{series_id}_{dt}",
+                                        "series_id": series_id,
+                                        "indicator_name": meta["name"],
+                                        "date": dt,
+                                        "value": val,
+                                        "frequency": meta["freq"],
+                                        "units": meta["units"],
+                                    }
+                                )
                                 if limit is not None and len(valid_points) >= limit:
                                     break
                             except ValueError:
@@ -168,15 +168,25 @@ class FredMacroWorker(BaseWorker):
     ) -> list[dict[str, Any]]:
         """Generate statistically realistic macroeconomic numbers."""
         base_yields = {
-            "DGS1MO": 5.28, "DGS3MO": 5.22, "DGS6MO": 5.08, "DGS1": 4.85,
-            "DGS2": 4.58, "DGS5": 4.22, "DGS10": 4.28, "DGS30": 4.48,
-            "FEDFUNDS": 5.33, "SOFR": 5.31, "CPIAUCSL": 314.5, "GDPC1": 22800.0,
+            "DGS1MO": 5.28,
+            "DGS3MO": 5.22,
+            "DGS6MO": 5.08,
+            "DGS1": 4.85,
+            "DGS2": 4.58,
+            "DGS5": 4.22,
+            "DGS10": 4.28,
+            "DGS30": 4.48,
+            "FEDFUNDS": 5.33,
+            "SOFR": 5.31,
+            "CPIAUCSL": 314.5,
+            "GDPC1": 22800.0,
         }
         center_val = base_yields.get(series_id, 4.25)
         today = datetime.now(UTC).date()
         results: list[dict[str, Any]] = []
 
         from datetime import timedelta
+
         pts_count = limit if limit is not None else 15
         for i in range(pts_count):
             d = today - timedelta(days=i)
@@ -185,15 +195,17 @@ class FredMacroWorker(BaseWorker):
                 continue
             noise = (abs(hash(f"{series_id}_{d.isoformat()}")) % 20 - 10) * 0.015
             val = round(center_val + noise, 4)
-            results.append({
-                "id": f"{series_id}_{d.isoformat()}",
-                "series_id": series_id,
-                "indicator_name": meta["name"],
-                "date": d.isoformat(),
-                "value": val,
-                "frequency": meta["freq"],
-                "units": meta["units"],
-            })
+            results.append(
+                {
+                    "id": f"{series_id}_{d.isoformat()}",
+                    "series_id": series_id,
+                    "indicator_name": meta["name"],
+                    "date": d.isoformat(),
+                    "value": val,
+                    "frequency": meta["freq"],
+                    "units": meta["units"],
+                }
+            )
 
         return results
 

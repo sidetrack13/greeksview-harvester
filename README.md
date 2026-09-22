@@ -139,10 +139,12 @@ python -m harvester.workers.congressional.worker
 import asyncio
 from harvester.workers import get_worker
 
+
 async def main():
     worker = get_worker("cboe_options")
     result = await worker.run_once(days_back=5)
     print(f"Status: {result.status}, Upserted: {result.records_upserted}")
+
 
 asyncio.run(main())
 ```
