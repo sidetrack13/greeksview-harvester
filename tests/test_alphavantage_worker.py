@@ -394,12 +394,26 @@ async def test_worker_real_flow_with_json_mocks(tmp_path):
         h_i, u_i = await worker.download_intraday_bars(db, ["SPY"], use_mock=False)
         assert h_i == 1 and u_i == 1
 
-        h_o, u_o = await worker.download_historical_options(db, ["SPY"], use_mock=False)
+        h_o, u_o = await worker.download_historical_options(db, ["SPY"], trade_dates=["2024-06-14"], use_mock=False)
         assert h_o == 1 and u_o == 1
 
-        # Test options real fetch with moneyness filtering and pruning
+        # Test options skip_existing skips already-stored dates
+        rep_skip = HarvestReport()
+        h_o_skip, u_o_skip = await worker.download_historical_options(
+            db, ["SPY"], trade_dates=["2024-06-14"], skip_existing=True, use_mock=False, report=rep_skip
+        )
+        assert h_o_skip == 0 and u_o_skip == 0
+        assert rep_skip.skipped["options_already_stored"] == 1
+
+        # Test options real fetch with moneyness filtering and pruning (skip_existing=False to re-fetch)
         h_o2, u_o2 = await worker.download_historical_options(
-            db, ["SPY"], moneyness_band_pct=50.0, prune_inactive=True, use_mock=False
+            db,
+            ["SPY"],
+            trade_dates=["2024-06-14"],
+            moneyness_band_pct=50.0,
+            prune_inactive=True,
+            skip_existing=False,
+            use_mock=False,
         )
         assert h_o2 == 1 and u_o2 == 1
 
@@ -571,6 +585,118 @@ async def test_download_historical_options_prune_inactive(tmp_path):
             row = await cur.fetchone()
             num_dates, total_rows = row[0], row[1]
             assert total_rows == num_dates * 8
+
+
+@pytest.mark.asyncio
+async def test_download_historical_options_skip_existing_resume(tmp_path):
+    db_file = str(tmp_path / "resume.db")
+    settings = Settings(database_url=f"sqlite:///{db_file}")
+    worker = AlphaVantageWorker(settings=settings)
+
+    async with DatabaseManager(settings) as db:
+        await db.initialize_tables()
+
+        # Pass 1: Fresh load with skip_existing=True
+        rep1 = HarvestReport()
+        h1, u1 = await worker.download_historical_options(
+            db, ["SPY"], days_back=5, skip_existing=True, use_mock=True, report=rep1
+        )
+        assert h1 > 0
+        assert u1 == h1
+        assert rep1.skipped["options_already_stored"] == 0
+
+        # Pass 2: Resume with same symbol and date range -> all dates already exist and are skipped
+        rep2 = HarvestReport()
+        h2, u2 = await worker.download_historical_options(
+            db, ["SPY"], days_back=5, skip_existing=True, use_mock=True, report=rep2
+        )
+        assert h2 == 0
+        assert u2 == 0
+        assert rep2.skipped["options_already_stored"] > 0
+
+        # Pass 3: Force re-fetch with skip_existing=False -> fetches and re-upserts
+        rep3 = HarvestReport()
+        h3, u3 = await worker.download_historical_options(
+            db, ["SPY"], days_back=5, skip_existing=False, use_mock=True, report=rep3
+        )
+        assert h3 == h1
+        assert u3 == u1
+        assert rep3.skipped["options_already_stored"] == 0
+
+        # Pass 4: Multi-symbol with SPY already stored and QQQ new
+        rep4 = HarvestReport()
+        h4, u4 = await worker.download_historical_options(
+            db, ["SPY", "QQQ"], days_back=5, skip_existing=True, use_mock=True, report=rep4
+        )
+        assert h4 == h1  # only QQQ records fetched
+        assert u4 == u1
+        assert rep4.skipped["options_already_stored"] > 0  # SPY skipped
+
+
+def test_cli_run_alphavantage_skip_existing(tmp_path) -> None:
+    db_file = str(tmp_path / "cli_resume.db")
+    # Pass 1: Initial fetch
+    res1 = runner.invoke(
+        app,
+        [
+            "run",
+            "alphavantage",
+            "--mock",
+            "--dataset",
+            "options",
+            "--symbols",
+            "SPY",
+            "--days-back",
+            "3",
+            "--db-url",
+            f"sqlite:///{db_file}",
+        ],
+    )
+    assert res1.exit_code == 0
+    assert "SUCCESS" in res1.stdout
+
+    # Pass 2: Resume run with --skip-existing (default)
+    res2 = runner.invoke(
+        app,
+        [
+            "run",
+            "alphavantage",
+            "--mock",
+            "--dataset",
+            "options",
+            "--symbols",
+            "SPY",
+            "--days-back",
+            "3",
+            "--skip-existing",
+            "--db-url",
+            f"sqlite:///{db_file}",
+        ],
+    )
+    assert res2.exit_code == 0
+    assert "SUCCESS" in res2.stdout
+    assert "options_already_stored" in res2.stdout
+
+    # Pass 3: Force re-fetch with --no-skip-existing
+    res3 = runner.invoke(
+        app,
+        [
+            "run",
+            "alphavantage",
+            "--mock",
+            "--dataset",
+            "options",
+            "--symbols",
+            "SPY",
+            "--days-back",
+            "3",
+            "--no-skip-existing",
+            "--db-url",
+            f"sqlite:///{db_file}",
+        ],
+    )
+    assert res3.exit_code == 0
+    assert "SUCCESS" in res3.stdout
 
 
 @pytest.mark.asyncio

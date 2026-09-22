@@ -380,6 +380,9 @@ async def test_postgres_mode_mocked() -> None:
         assert mock_conn.fetchval.call_args[0][2] == date(2026, 9, 14)
         assert await db.get_stock_close("SPY", "invalid-date") is None
 
+        mock_conn.fetch.return_value = [(date(2026, 9, 14),), ("2026-09-15",)]
+        assert await db.get_stored_options_dates("SPY") == {"2026-09-14", "2026-09-15"}
+
         mock_conn.execute.return_value = "DELETE 5"
         assert await db.prune_options_chains_older_than(30, symbol="SPY") == 5
         assert isinstance(mock_conn.execute.call_args[0][2], date)
@@ -589,6 +592,8 @@ async def test_alphavantage_tables_sqlite(test_db: DatabaseManager) -> None:
     assert await test_db.upsert_options_chains_eod(chain_records) == 1
     chain_records[0]["last_price"] = 3.60
     assert await test_db.upsert_options_chains_eod([chain_records[0]]) == 1
+    assert await test_db.get_stored_options_dates("AAPL") == {"2026-09-18"}
+    assert await test_db.get_stored_options_dates("NONEXISTENT") == set()
 
     # 4. Company Fundamentals
     assert await test_db.upsert_company_fundamentals([]) == 0

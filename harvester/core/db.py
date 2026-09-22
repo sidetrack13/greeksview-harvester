@@ -2039,6 +2039,26 @@ class DatabaseManager:
             dates = dates[-limit:]
         return dates
 
+    async def get_stored_options_dates(self, symbol: str) -> set[str]:
+        """Return the set of trade dates stored in options_chains_eod for a symbol."""
+        sym = symbol.upper()
+        if self.settings.is_sqlite:
+            assert self._sqlite_conn is not None
+            async with self._sqlite_conn.execute(
+                "SELECT DISTINCT trade_date FROM options_chains_eod WHERE symbol = ?",
+                (sym,),
+            ) as cur:
+                rows = await cur.fetchall()
+                return {str(r[0]) for r in rows}
+        else:
+            assert self._pg_pool is not None
+            async with self._pg_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT DISTINCT trade_date FROM options_chains_eod WHERE symbol = $1",
+                    sym,
+                )
+                return {r[0].isoformat() if isinstance(r[0], date) else str(r[0]) for r in rows}
+
     async def mark_mock_written(self) -> None:
         """Stamp the open SQLite database as written by a mock run."""
         if not self.settings.is_sqlite:
