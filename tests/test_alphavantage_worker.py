@@ -21,7 +21,12 @@ from harvester.workers.alphavantage.pacer import (
     AlphaVantagePacer,
     is_burst_notice,
 )
-from harvester.workers.alphavantage.worker import AlphaVantageWorker, HarvestReport
+from harvester.workers.alphavantage.worker import (
+    AlphaVantageWorker,
+    HarvestReport,
+    _optional_float,
+    _parse_metric_float,
+)
 
 runner = CliRunner()
 
@@ -666,3 +671,114 @@ def test_cli_archive_options_and_storage_flags(tmp_path):
     assert res_archive.exit_code == 0
     assert "Options Archival & Pruning Summary" in res_archive.stdout
     assert "Records Exported" in res_archive.stdout
+
+
+def test_optional_float_placeholders():
+    """Verify _optional_float enforces options contract and _parse_metric_float handles placeholders."""
+    # _optional_float for options: None or empty returns None, unparseable strings raise ValueError
+    assert _optional_float(None) is None
+    assert _optional_float("") is None
+    assert _optional_float("   ") is None
+    assert _optional_float(0.0) == 0.0
+    assert _optional_float(42.5) == 42.5
+    with pytest.raises(ValueError):
+        _optional_float("n/a")
+    with pytest.raises(ValueError):
+        _optional_float("corrupted_text")
+
+    # _parse_metric_float for reference/corporate metrics: placeholders return None honestly
+    assert _parse_metric_float(None) is None
+    assert _parse_metric_float("") is None
+    assert _parse_metric_float("   ") is None
+    assert _parse_metric_float("n/a") is None
+    assert _parse_metric_float("N/A") is None
+    assert _parse_metric_float("None") is None
+    assert _parse_metric_float("null") is None
+    assert _parse_metric_float("-") is None
+    assert _parse_metric_float("nan") is None
+    assert _parse_metric_float("undefined") is None
+    assert _parse_metric_float("unknown") is None
+
+    # Valid numeric values
+    assert _parse_metric_float(0.0) == 0.0
+    assert _parse_metric_float(42) == 42.0
+    assert _parse_metric_float("42.5") == 42.5
+    assert _parse_metric_float("1,234.56") == 1234.56
+    assert _parse_metric_float("0.0009") == 0.0009
+    assert _parse_metric_float("corrupted_text") is None
+
+
+@pytest.mark.asyncio
+async def test_etf_profile_na_fields_tolerated(tmp_path):
+    """Verify that ETF profiles containing 'n/a', 'None', or missing metrics parse safely as None."""
+    db_file = str(tmp_path / "etf_na.db")
+    settings = Settings(database_url=f"sqlite:///{db_file}")
+    worker = AlphaVantageWorker(settings=settings)
+
+    # Mock ETF_PROFILE returning 'n/a' for portfolio_turnover and string numbers
+    async def mock_fetch_json(function, params=None, is_background=True):
+        if function == "ETF_PROFILE":
+            return {
+                "net_assets": "550,000,000",
+                "portfolio_turnover": "n/a",
+                "dividend_yield": "0.0125",
+                "expense_ratio": "None",
+                "holdings": [{"symbol": "MSFT", "weight": 0.07}],
+                "sectors": [{"sector": "Technology", "weight": 0.32}],
+            }
+        return {}
+
+    async def mock_fetch_csv(function, params=None, is_background=True):
+        return []
+
+    worker.client.fetch_json = mock_fetch_json
+    worker.client.fetch_csv = mock_fetch_csv
+
+    async with DatabaseManager(settings) as db:
+        await db.initialize_tables()
+        h, u = await worker.download_reference_data(db, ["SPY"], use_mock=False)
+        assert h == 1
+        assert u == 1
+
+        # Check database contents
+        row = await db.fetch(
+            "SELECT net_assets, portfolio_turnover, dividend_yield, expense_ratio FROM etf_profiles WHERE symbol = 'SPY'"
+        )
+        assert len(row) == 1
+        assert row[0]["net_assets"] == 550000000.0
+        assert row[0]["portfolio_turnover"] is None
+        assert row[0]["dividend_yield"] == 0.0125
+        assert row[0]["expense_ratio"] is None
+
+
+@pytest.mark.asyncio
+async def test_corporate_actions_na_fields_tolerated(tmp_path):
+    """Verify that corporate actions containing 'n/a' amounts or split factors are safely skipped."""
+    db_file = str(tmp_path / "actions_na.db")
+    settings = Settings(database_url=f"sqlite:///{db_file}")
+    worker = AlphaVantageWorker(settings=settings)
+
+    async def mock_fetch_json(function, params=None, is_background=True):
+        if function == "DIVIDENDS":
+            return {
+                "data": [
+                    {"ex_dividend_date": "2024-03-15", "amount": "0.25"},
+                    {"ex_dividend_date": "2024-06-15", "amount": "n/a"},
+                ]
+            }
+        elif function == "SPLITS":
+            return {
+                "data": [
+                    {"effective_date": "2020-08-31", "split_factor": "4.0"},
+                    {"effective_date": "2024-01-01", "split_factor": "None"},
+                ]
+            }
+        return {}
+
+    worker.client.fetch_json = mock_fetch_json
+
+    async with DatabaseManager(settings) as db:
+        await db.initialize_tables()
+        h, u = await worker.download_corporate_actions(db, ["AAPL"], use_mock=False)
+        assert h == 2  # Only the valid 1 dividend and 1 split are kept
+        assert u == 2

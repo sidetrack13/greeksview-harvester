@@ -117,6 +117,24 @@ def _optional_float(value: Any) -> float | None:
     return float(text)
 
 
+_UNKNOWN_METRIC_TOKENS = frozenset(("", "n/a", "none", "null", "-", "nan", "undefined", "unknown"))
+
+
+def _parse_metric_float(value: Any) -> float | None:
+    """Parse a financial/reference metric float where vendor placeholders ('n/a', 'None', '-') represent None."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if text.lower() in _UNKNOWN_METRIC_TOKENS:
+        return None
+    try:
+        return float(text.replace(",", ""))
+    except (ValueError, TypeError):
+        return None
+
+
 def _optional_count(value: Any) -> int | None:
     """Volume / open interest: None when not sent, a whole non-negative number otherwise."""
     number = _optional_float(value)
@@ -672,31 +690,35 @@ class AlphaVantageWorker(BaseWorker):
                 try:
                     div_data = await self.client.fetch_json("DIVIDENDS", {"symbol": sym})
                     for item in div_data.get("data", []):
-                        if item.get("ex_dividend_date") and item.get("amount"):
-                            div_records.append(
-                                {
-                                    "symbol": sym,
-                                    "ex_dividend_date": item["ex_dividend_date"],
-                                    "declaration_date": item.get("declaration_date"),
-                                    "record_date": item.get("record_date"),
-                                    "payment_date": item.get("payment_date"),
-                                    "amount": float(item["amount"]),
-                                }
-                            )
+                        if item.get("ex_dividend_date") and item.get("amount") is not None:
+                            amt = _parse_metric_float(item["amount"])
+                            if amt is not None:
+                                div_records.append(
+                                    {
+                                        "symbol": sym,
+                                        "ex_dividend_date": item["ex_dividend_date"],
+                                        "declaration_date": item.get("declaration_date"),
+                                        "record_date": item.get("record_date"),
+                                        "payment_date": item.get("payment_date"),
+                                        "amount": amt,
+                                    }
+                                )
                 except AlphaVantageError as exc:
                     logger.warning("Dividends fetch error for %s: %s", sym, exc)
 
                 try:
                     split_data = await self.client.fetch_json("SPLITS", {"symbol": sym})
                     for item in split_data.get("data", []):
-                        if item.get("effective_date") and item.get("split_factor"):
-                            split_records.append(
-                                {
-                                    "symbol": sym,
-                                    "effective_date": item["effective_date"],
-                                    "split_factor": float(item["split_factor"]),
-                                }
-                            )
+                        if item.get("effective_date") and item.get("split_factor") is not None:
+                            factor = _parse_metric_float(item["split_factor"])
+                            if factor is not None:
+                                split_records.append(
+                                    {
+                                        "symbol": sym,
+                                        "effective_date": item["effective_date"],
+                                        "split_factor": factor,
+                                    }
+                                )
                 except AlphaVantageError as exc:
                     logger.warning("Splits fetch error for %s: %s", sym, exc)
 
@@ -749,14 +771,16 @@ class AlphaVantageWorker(BaseWorker):
                 listings = await self.client.fetch_csv("LISTING_STATUS")
                 for row in listings:
                     if row.get("symbol"):
+                        ipo = row.get("ipoDate")
+                        delist = row.get("delistingDate")
                         listing_records.append(
                             {
                                 "symbol": row["symbol"].strip().upper(),
                                 "name": row.get("name"),
                                 "exchange": row.get("exchange"),
                                 "asset_type": row.get("assetType"),
-                                "ipo_date": row.get("ipoDate") if row.get("ipoDate") else None,
-                                "delisting_date": row.get("delistingDate") if row.get("delistingDate") else None,
+                                "ipo_date": ipo if is_iso_date(ipo) else None,
+                                "delisting_date": delist if is_iso_date(delist) else None,
                                 "status": row.get("status", "Active"),
                             }
                         )
@@ -767,20 +791,22 @@ class AlphaVantageWorker(BaseWorker):
             for etf_sym in etf_targets:
                 try:
                     data = await self.client.fetch_json("ETF_PROFILE", {"symbol": etf_sym})
-                    if data and "net_assets" in data:
+                    if data and isinstance(data, dict) and "net_assets" in data:
                         etf_records.append(
                             {
                                 "symbol": etf_sym,
-                                "net_assets": float(data.get("net_assets") or 0),
-                                "portfolio_turnover": float(data.get("portfolio_turnover") or 0),
-                                "dividend_yield": float(data.get("dividend_yield") or 0),
-                                "expense_ratio": float(data.get("expense_ratio") or 0),
+                                "net_assets": _parse_metric_float(data.get("net_assets")),
+                                "portfolio_turnover": _parse_metric_float(data.get("portfolio_turnover")),
+                                "dividend_yield": _parse_metric_float(data.get("dividend_yield")),
+                                "expense_ratio": _parse_metric_float(data.get("expense_ratio")),
                                 "holdings_json": json.dumps(data.get("holdings", [])),
                                 "sectors_json": json.dumps(data.get("sectors", [])),
                             }
                         )
                 except AlphaVantageError as exc:
                     logger.warning("ETF profile fetch error for %s: %s", etf_sym, exc)
+                except (ValueError, TypeError) as exc:
+                    logger.warning("ETF profile parse error for %s: %s", etf_sym, exc)
 
         harvested += len(listing_records) + len(etf_records)
         if listing_records:
