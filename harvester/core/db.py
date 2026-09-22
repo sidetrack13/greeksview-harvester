@@ -53,6 +53,26 @@ def optional_int(value: Any) -> int | None:
     return int(value)
 
 
+def to_pg_date(val: Any) -> date | None:
+    """Safely parse a date string or object to datetime.date for PostgreSQL binary encoding."""
+    if val is None or val == "":
+        return None
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, date):
+        return val
+    s = str(val).strip().split(" ")[0]
+    try:
+        return date.fromisoformat(s)
+    except Exception:
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except Exception:
+                continue
+    return None
+
+
 def mark_sqlite_file_mock(path: str) -> None:
     """Stamp a SQLite file as written by a mock run (creates the file if absent)."""
     if not path or path == ":memory:":
@@ -73,6 +93,7 @@ def sqlite_file_is_mock(path: str) -> bool:
     finally:
         conn.close()
     return bool(row) and int(row[0]) == MOCK_APPLICATION_ID
+
 
 # Schema DDL matching GreeksView GV-96 specifications
 SQLITE_SCHEMA = """
@@ -711,8 +732,12 @@ class DatabaseManager:
                 try:
                     await conn.execute(POSTGRES_SCHEMA)
                 except (asyncpg.exceptions.InsufficientPrivilegeError, asyncpg.exceptions.PostgresError) as e:
-                    logger.debug("Insufficient privilege to execute DDL (%s); assuming tables already exist in '%s'", e, schema)
-            logger.info("Connected to PostgreSQL pool (schema=%s): %s", schema, self.settings.database_url.split("@")[-1])
+                    logger.debug(
+                        "Insufficient privilege to execute DDL (%s); assuming tables already exist in '%s'", e, schema
+                    )
+            logger.info(
+                "Connected to PostgreSQL pool (schema=%s): %s", schema, self.settings.database_url.split("@")[-1]
+            )
 
     async def close(self) -> None:
         """Close database connection or pool."""
@@ -785,6 +810,7 @@ class DatabaseManager:
                 updated_at = NOW()
             """
             async with self._pg_pool.acquire() as conn:
+                f_date = to_pg_date(filing.filing_date)
                 await conn.execute(
                     query,
                     filing.filing_id,
@@ -792,7 +818,7 @@ class DatabaseManager:
                     filing.member_name,
                     filing.member_id,
                     filing.filing_year,
-                    filing.filing_date,
+                    f_date,
                     filing.doc_url,
                     filing.raw_text,
                     filing.sha256_hash,
@@ -853,6 +879,10 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for tx in transactions:
+                    t_date = to_pg_date(tx.transaction_date)
+                    f_date = to_pg_date(tx.filing_date)
+                    if t_date is None or f_date is None:
+                        continue
                     res = await conn.execute(
                         query,
                         tx.filing_id,
@@ -868,8 +898,8 @@ class DatabaseManager:
                         tx.amount_bracket,
                         tx.amount_min,
                         tx.amount_max,
-                        tx.transaction_date,
-                        tx.filing_date,
+                        t_date,
+                        f_date,
                         tx.owner.value,
                         tx.comment,
                     )
@@ -1033,21 +1063,25 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
+                    f_date = to_pg_date(r.get("filing_date"))
+                    if f_date is None:
+                        continue
+                    t_date = to_pg_date(r.get("transaction_date"))
                     await conn.execute(
                         query,
                         r["id"],
                         r["symbol"],
-                        r["filing_date"],
-                        r.get("transaction_date"),
+                        f_date,
+                        t_date,
                         r["reporting_owner"],
                         r.get("owner_title"),
                         bool(r.get("is_director")),
                         bool(r.get("is_officer")),
                         bool(r.get("is_ten_percent")),
                         r["transaction_type"],
-                        r.get("shares"),
-                        r.get("price_per_share"),
-                        r.get("shares_owned_following"),
+                        float(r["shares"]) if r.get("shares") is not None else None,
+                        float(r["price_per_share"]) if r.get("price_per_share") is not None else None,
+                        float(r["shares_owned_following"]) if r.get("shares_owned_following") is not None else None,
                         r.get("sec_form", "4"),
                         r.get("filing_url"),
                     )
@@ -1112,18 +1146,21 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
+                    rep_date = to_pg_date(r.get("report_calendar_or_quarter"))
+                    if rep_date is None:
+                        continue
                     await conn.execute(
                         query,
                         r["id"],
                         r["cik"],
                         r["institution_name"],
-                        r["report_calendar_or_quarter"],
+                        rep_date,
                         r["symbol"],
                         r.get("cusip"),
-                        r["shares"],
-                        r.get("market_value"),
+                        float(r["shares"]) if r.get("shares") is not None else 0.0,
+                        float(r["market_value"]) if r.get("market_value") is not None else None,
                         r.get("investment_discretion"),
-                        r.get("voting_authority_sole"),
+                        float(r["voting_authority_sole"]) if r.get("voting_authority_sole") is not None else None,
                         r.get("sec_form", "13F-HR"),
                         r.get("filing_url"),
                     )
@@ -1180,16 +1217,19 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
+                    w_date = to_pg_date(r.get("week_start_date"))
+                    if w_date is None:
+                        continue
                     await conn.execute(
                         query,
                         r["id"],
                         r["symbol"],
-                        r["week_start_date"],
+                        w_date,
                         r["tier"],
-                        r["otc_volume"],
-                        r["total_trades"],
-                        r.get("total_market_volume"),
-                        r.get("dark_pool_share_pct"),
+                        float(r["otc_volume"]) if r.get("otc_volume") is not None else 0.0,
+                        float(r["total_trades"]) if r.get("total_trades") is not None else 0.0,
+                        float(r["total_market_volume"]) if r.get("total_market_volume") is not None else None,
+                        float(r["dark_pool_share_pct"]) if r.get("dark_pool_share_pct") is not None else None,
                     )
                     count += 1
         return count
@@ -1253,17 +1293,20 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
+                    t_date = to_pg_date(r.get("trade_date"))
+                    if t_date is None:
+                        continue
                     await conn.execute(
                         query,
                         r["id"],
-                        r["trade_date"],
-                        r["total_call_volume"],
-                        r["total_put_volume"],
-                        r["total_volume"],
-                        r.get("equity_pc_ratio"),
-                        r.get("index_pc_ratio"),
-                        r.get("total_pc_ratio"),
-                        r.get("vix_volume"),
+                        t_date,
+                        float(r["total_call_volume"]) if r.get("total_call_volume") is not None else 0.0,
+                        float(r["total_put_volume"]) if r.get("total_put_volume") is not None else 0.0,
+                        float(r["total_volume"]) if r.get("total_volume") is not None else 0.0,
+                        float(r["equity_pc_ratio"]) if r.get("equity_pc_ratio") is not None else None,
+                        float(r["index_pc_ratio"]) if r.get("index_pc_ratio") is not None else None,
+                        float(r["total_pc_ratio"]) if r.get("total_pc_ratio") is not None else None,
+                        float(r["vix_volume"]) if r.get("vix_volume") is not None else None,
                     )
                     count += 1
         return count
@@ -1315,13 +1358,16 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
+                    obs_date = to_pg_date(r.get("date"))
+                    if obs_date is None:
+                        continue
                     await conn.execute(
                         query,
                         r["id"],
                         r["series_id"],
                         r["indicator_name"],
-                        r["date"],
-                        r["value"],
+                        obs_date,
+                        float(r["value"]) if r.get("value") is not None else 0.0,
                         r.get("frequency", "daily"),
                         r.get("units", "Percent"),
                     )
@@ -1393,10 +1439,9 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
-                    t_date = r["trade_date"]
-                    if isinstance(t_date, str):
-                        with contextlib.suppress(Exception):
-                            t_date = date.fromisoformat(t_date.split(" ")[0])
+                    t_date = to_pg_date(r.get("trade_date"))
+                    if t_date is None:
+                        continue
                     await conn.execute(
                         query,
                         r["symbol"].upper(),
@@ -1564,14 +1609,10 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
-                    t_date = r["trade_date"]
-                    if isinstance(t_date, str):
-                        with contextlib.suppress(Exception):
-                            t_date = date.fromisoformat(t_date.split(" ")[0])
-                    exp_date = r["expiration"]
-                    if isinstance(exp_date, str):
-                        with contextlib.suppress(Exception):
-                            exp_date = date.fromisoformat(exp_date.split(" ")[0])
+                    t_date = to_pg_date(r.get("trade_date"))
+                    exp_date = to_pg_date(r.get("expiration"))
+                    if t_date is None or exp_date is None:
+                        continue
                     await conn.execute(
                         query,
                         r["contract_id"],
@@ -1696,13 +1737,19 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
+                    ex_date = to_pg_date(r.get("ex_dividend_date"))
+                    if ex_date is None:
+                        continue
+                    dec_date = to_pg_date(r.get("declaration_date"))
+                    rec_date = to_pg_date(r.get("record_date"))
+                    pay_date = to_pg_date(r.get("payment_date"))
                     await conn.execute(
                         query,
                         r["symbol"].upper(),
-                        str(r["ex_dividend_date"]),
-                        str(r["declaration_date"]) if r.get("declaration_date") else None,
-                        str(r["record_date"]) if r.get("record_date") else None,
-                        str(r["payment_date"]) if r.get("payment_date") else None,
+                        ex_date,
+                        dec_date,
+                        rec_date,
+                        pay_date,
                         float(r["amount"]),
                     )
                     count += 1
@@ -1745,10 +1792,13 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
+                    eff_date = to_pg_date(r.get("effective_date"))
+                    if eff_date is None:
+                        continue
                     await conn.execute(
                         query,
                         r["symbol"].upper(),
-                        str(r["effective_date"]),
+                        eff_date,
                         float(r["split_factor"]),
                     )
                     count += 1
@@ -1875,14 +1925,16 @@ class DatabaseManager:
             """
             async with self._pg_pool.acquire() as conn:
                 for r in records:
+                    ipo_date = to_pg_date(r.get("ipo_date"))
+                    delist_date = to_pg_date(r.get("delisting_date"))
                     await conn.execute(
                         query,
                         r["symbol"].upper(),
                         r.get("name"),
                         r.get("exchange"),
                         r.get("asset_type"),
-                        str(r["ipo_date"]) if r.get("ipo_date") else None,
-                        str(r["delisting_date"]) if r.get("delisting_date") else None,
+                        ipo_date,
+                        delist_date,
                         r.get("status", "Active"),
                     )
                     count += 1
@@ -1937,11 +1989,14 @@ class DatabaseManager:
                 return float(row[0]) if row and row[0] is not None else None
         else:
             assert self._pg_pool is not None
+            c_date = to_pg_date(trade_date)
+            if c_date is None:
+                return None
             async with self._pg_pool.acquire() as conn:
                 val = await conn.fetchval(
                     "SELECT close FROM stock_bars_daily WHERE symbol = $1 AND trade_date = $2::date",
                     sym,
-                    str(trade_date),
+                    c_date,
                 )
                 return float(val) if val is not None else None
 
@@ -1951,10 +2006,11 @@ class DatabaseManager:
         symbol: str | None = None,
     ) -> int:
         """Prune options chains older than a cutoff date (today - days_to_keep)."""
-        cutoff = (datetime.now(UTC).date() - timedelta(days=days_to_keep)).isoformat()
+        cutoff_date = datetime.now(UTC).date() - timedelta(days=days_to_keep)
         deleted = 0
         if self.settings.is_sqlite:
             assert self._sqlite_conn is not None
+            cutoff = cutoff_date.isoformat()
             if symbol:
                 cur = await self._sqlite_conn.execute(
                     "DELETE FROM options_chains_eod WHERE symbol = ? AND trade_date < ?",
@@ -1974,12 +2030,12 @@ class DatabaseManager:
                     res = await conn.execute(
                         "DELETE FROM options_chains_eod WHERE symbol = $1 AND trade_date < $2::date",
                         symbol.upper(),
-                        cutoff,
+                        cutoff_date,
                     )
                 else:
                     res = await conn.execute(
                         "DELETE FROM options_chains_eod WHERE trade_date < $1::date",
-                        cutoff,
+                        cutoff_date,
                     )
                 try:
                     deleted = int(res.split()[-1])
@@ -1996,10 +2052,25 @@ class DatabaseManager:
         """Export options chains to a compressed CSV.GZ archive."""
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         columns = [
-            "contract_id", "symbol", "trade_date", "expiration", "strike",
-            "option_type", "last_price", "mark_price", "bid", "ask",
-            "volume", "open_interest", "implied_volatility", "delta",
-            "gamma", "theta", "vega", "rho", "created_at",
+            "contract_id",
+            "symbol",
+            "trade_date",
+            "expiration",
+            "strike",
+            "option_type",
+            "last_price",
+            "mark_price",
+            "bid",
+            "ask",
+            "volume",
+            "open_interest",
+            "implied_volatility",
+            "delta",
+            "gamma",
+            "theta",
+            "vega",
+            "rho",
+            "created_at",
         ]
         exported = 0
         if self.settings.is_sqlite:
@@ -2035,9 +2106,11 @@ class DatabaseManager:
                 pg_params.append(symbol.upper())
                 idx += 1
             if before_date:
-                conditions.append(f"trade_date < ${idx}::date")
-                pg_params.append(str(before_date))
-                idx += 1
+                b_date = to_pg_date(before_date)
+                if b_date:
+                    conditions.append(f"trade_date < ${idx}::date")
+                    pg_params.append(b_date)
+                    idx += 1
             if conditions:
                 query += " WHERE " + " AND ".join(conditions)
             query += " ORDER BY trade_date, symbol, strike"
@@ -2051,5 +2124,3 @@ class DatabaseManager:
                         exported += 1
 
         return exported
-
-

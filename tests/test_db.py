@@ -1,13 +1,13 @@
 """Unit and integration tests for async database persistence and idempotency."""
 
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncpg
 import pytest
 
 from harvester.config import Settings
-from harvester.core.db import DatabaseManager
+from harvester.core.db import DatabaseManager, to_pg_date
 from harvester.core.models import (
     CongressionalFiling,
     CongressionalTransaction,
@@ -169,22 +169,201 @@ async def test_postgres_mode_mocked() -> None:
         assert stats["by_type"]["BUY"] == 1
         assert stats["by_chamber"]["house"] == 1
         assert stats["options_chains"] == 0
-        # 5. Harvester tables in Postgres mode
+        # 5. Harvester tables in Postgres mode (verify string dates converted to date objects)
         mock_conn.execute.return_value = "INSERT 0 1"
-        assert await db.upsert_insider_trades([{"id": "it_1", "symbol": "NVDA", "filing_date": "2026-09-10", "reporting_owner": "Jensen", "transaction_type": "Sale"}]) == 1
+        assert (
+            await db.upsert_insider_trades(
+                [
+                    {
+                        "id": "it_1",
+                        "symbol": "NVDA",
+                        "filing_date": "2026-09-10",
+                        "reporting_owner": "Jensen",
+                        "transaction_type": "Sale",
+                    }
+                ]
+            )
+            == 1
+        )
+        assert mock_conn.execute.call_args[0][3] == date(2026, 9, 10)
         assert await db.upsert_insider_trades([]) == 0
+        assert await db.upsert_insider_trades([{"id": "it_bad", "symbol": "NVDA", "filing_date": "invalid"}]) == 0
 
-        assert await db.upsert_institutional_holdings([{"id": "ih_1", "cik": "0001067983", "institution_name": "Berkshire", "report_calendar_or_quarter": "2026-06-30", "symbol": "AAPL", "shares": 100}]) == 1
+        assert (
+            await db.upsert_institutional_holdings(
+                [
+                    {
+                        "id": "ih_1",
+                        "cik": "0001067983",
+                        "institution_name": "Berkshire",
+                        "report_calendar_or_quarter": "2026-06-30",
+                        "symbol": "AAPL",
+                        "shares": 100,
+                    }
+                ]
+            )
+            == 1
+        )
+        assert mock_conn.execute.call_args[0][4] == date(2026, 6, 30)
         assert await db.upsert_institutional_holdings([]) == 0
+        assert (
+            await db.upsert_institutional_holdings(
+                [
+                    {
+                        "id": "ih_bad",
+                        "cik": "1",
+                        "institution_name": "b",
+                        "report_calendar_or_quarter": "invalid",
+                        "symbol": "A",
+                    }
+                ]
+            )
+            == 0
+        )
 
-        assert await db.upsert_finra_otc_volume([{"id": "otc_1", "symbol": "NVDA", "week_start_date": "2026-09-07", "tier": "Tier 1", "otc_volume": 1000, "total_trades": 50}]) == 1
+        assert (
+            await db.upsert_finra_otc_volume(
+                [
+                    {
+                        "id": "otc_1",
+                        "symbol": "NVDA",
+                        "week_start_date": "2026-09-07",
+                        "tier": "Tier 1",
+                        "otc_volume": 1000,
+                        "total_trades": 50,
+                    }
+                ]
+            )
+            == 1
+        )
+        assert mock_conn.execute.call_args[0][3] == date(2026, 9, 7)
         assert await db.upsert_finra_otc_volume([]) == 0
+        assert (
+            await db.upsert_finra_otc_volume(
+                [{"id": "otc_bad", "symbol": "NVDA", "week_start_date": "invalid", "tier": "t"}]
+            )
+            == 0
+        )
 
-        assert await db.upsert_cboe_daily_options([{"id": "cboe_1", "trade_date": "2026-09-11", "total_call_volume": 100, "total_put_volume": 80, "total_volume": 180}]) == 1
+        assert (
+            await db.upsert_cboe_daily_options(
+                [
+                    {
+                        "id": "cboe_1",
+                        "trade_date": "2026-09-11",
+                        "total_call_volume": 100,
+                        "total_put_volume": 80,
+                        "total_volume": 180,
+                    }
+                ]
+            )
+            == 1
+        )
+        assert mock_conn.execute.call_args[0][2] == date(2026, 9, 11)
         assert await db.upsert_cboe_daily_options([]) == 0
+        assert await db.upsert_cboe_daily_options([{"id": "cboe_bad", "trade_date": "invalid"}]) == 0
 
-        assert await db.upsert_macro_indicators([{"id": "m_1", "series_id": "DGS10", "indicator_name": "10Y", "date": "2026-09-11", "value": 4.25}]) == 1
+        assert (
+            await db.upsert_macro_indicators(
+                [{"id": "m_1", "series_id": "DGS10", "indicator_name": "10Y", "date": "2026-09-11", "value": 4.25}]
+            )
+            == 1
+        )
+        assert mock_conn.execute.call_args[0][4] == date(2026, 9, 11)
         assert await db.upsert_macro_indicators([]) == 0
+        assert (
+            await db.upsert_macro_indicators(
+                [{"id": "m_bad", "series_id": "DGS10", "indicator_name": "10Y", "date": "invalid", "value": 1.0}]
+            )
+            == 0
+        )
+
+        # Stock bars daily
+        assert (
+            await db.upsert_stock_bars_daily(
+                [
+                    {
+                        "symbol": "NVDA",
+                        "trade_date": "2026-09-10",
+                        "open": 100.0,
+                        "high": 105.0,
+                        "low": 99.0,
+                        "close": 104.0,
+                        "adjusted_close": 104.0,
+                        "volume": 1000000,
+                    }
+                ]
+            )
+            == 1
+        )
+        assert mock_conn.execute.call_args[0][2] == date(2026, 9, 10)
+        assert await db.upsert_stock_bars_daily([]) == 0
+        assert await db.upsert_stock_bars_daily([{"symbol": "NVDA", "trade_date": "invalid"}]) == 0
+
+        # Options chains EOD
+        assert (
+            await db.upsert_options_chains_eod(
+                [
+                    {
+                        "contract_id": "NVDA260918C00100000",
+                        "symbol": "NVDA",
+                        "trade_date": "2026-09-10",
+                        "expiration": "2026-09-18",
+                        "strike": 100.0,
+                        "option_type": "call",
+                        "close": 5.0,
+                    }
+                ]
+            )
+            == 1
+        )
+        assert mock_conn.execute.call_args[0][3] == date(2026, 9, 10)
+        assert mock_conn.execute.call_args[0][4] == date(2026, 9, 18)
+        assert await db.upsert_options_chains_eod([]) == 0
+        assert (
+            await db.upsert_options_chains_eod(
+                [{"contract_id": "x", "symbol": "NVDA", "trade_date": "invalid", "expiration": "2026-09-18"}]
+            )
+            == 0
+        )
+
+        # Corporate dividends
+        assert (
+            await db.upsert_corporate_dividends(
+                [{"symbol": "NVDA", "ex_dividend_date": "2026-09-10", "declaration_date": "2026-08-20", "amount": 0.04}]
+            )
+            == 1
+        )
+        assert mock_conn.execute.call_args[0][2] == date(2026, 9, 10)
+        assert mock_conn.execute.call_args[0][3] == date(2026, 8, 20)
+        assert await db.upsert_corporate_dividends([]) == 0
+        assert (
+            await db.upsert_corporate_dividends([{"symbol": "NVDA", "ex_dividend_date": "invalid", "amount": 0.04}])
+            == 0
+        )
+
+        # Corporate splits
+        assert (
+            await db.upsert_corporate_splits([{"symbol": "NVDA", "effective_date": "2026-09-10", "split_factor": 10.0}])
+            == 1
+        )
+        assert mock_conn.execute.call_args[0][2] == date(2026, 9, 10)
+        assert await db.upsert_corporate_splits([]) == 0
+        assert (
+            await db.upsert_corporate_splits([{"symbol": "NVDA", "effective_date": "invalid", "split_factor": 10.0}])
+            == 0
+        )
+
+        # Listing status
+        assert (
+            await db.upsert_listing_status(
+                [{"symbol": "NVDA", "name": "NVIDIA", "ipo_date": "1999-01-22", "delisting_date": "2030-01-01"}]
+            )
+            == 1
+        )
+        assert mock_conn.execute.call_args[0][5] == date(1999, 1, 22)
+        assert mock_conn.execute.call_args[0][6] == date(2030, 1, 1)
+        assert await db.upsert_listing_status([]) == 0
 
         # execute, fetch, fetchval in Postgres mode
         mock_conn.fetch.side_effect = None
@@ -198,10 +377,14 @@ async def test_postgres_mode_mocked() -> None:
         # Storage optimization methods in Postgres mode
         mock_conn.fetchval.return_value = 450.5
         assert await db.get_stock_close("SPY", "2026-09-14") == 450.5
+        assert mock_conn.fetchval.call_args[0][2] == date(2026, 9, 14)
+        assert await db.get_stock_close("SPY", "invalid-date") is None
 
         mock_conn.execute.return_value = "DELETE 5"
         assert await db.prune_options_chains_older_than(30, symbol="SPY") == 5
+        assert isinstance(mock_conn.execute.call_args[0][2], date)
         assert await db.prune_options_chains_older_than(30) == 5
+        assert isinstance(mock_conn.execute.call_args[0][1], date)
 
         await db.close()
         assert mock_pool.close.called
@@ -389,3 +572,26 @@ async def test_postgres_connect_insufficient_privilege() -> None:
         await db.connect()
         assert db._pg_pool is not None
 
+
+def test_to_pg_date() -> None:
+    """Verify to_pg_date parses dates, datetimes, and formats or safely returns None."""
+    # 1. ISO string
+    assert to_pg_date("2026-09-21") == date(2026, 9, 21)
+    assert to_pg_date("2026-09-21 15:30:00") == date(2026, 9, 21)
+
+    # 2. Slash formats
+    assert to_pg_date("09/21/2026") == date(2026, 9, 21)
+    assert to_pg_date("2026/09/21") == date(2026, 9, 21)
+
+    # 3. datetime and date objects
+    assert to_pg_date(date(2026, 9, 21)) == date(2026, 9, 21)
+    assert to_pg_date(datetime(2026, 9, 21, 12, 0, 0)) == date(2026, 9, 21)
+
+    # 4. None and empty
+    assert to_pg_date(None) is None
+    assert to_pg_date("") is None
+
+    # 5. Malformed inputs
+    assert to_pg_date("not-a-date") is None
+    assert to_pg_date("2026-99-99") is None
+    assert to_pg_date(12345) is None
