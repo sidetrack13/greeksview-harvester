@@ -64,9 +64,19 @@ class Settings(BaseSettings):
     # must set ALPHAVANTAGE_RPM / ALPHAVANTAGE_MAX_PER_SECOND so that the harvester
     # plus the product's worst case stays inside the key's budget. Never raise them
     # to the licence ceiling. The pacer enforces both limits (pacer.py).
-    alphavantage_max_per_second: int = 1
-    alphavantage_rpm: int = 9
+    alphavantage_max_per_second: int = 25
+    alphavantage_rpm: int = 1100
     alphavantage_cooldown_ms: int = 2000
+    # HOW MANY CHAIN FETCHES ARE IN FLIGHT AT ONCE (options backfill only).
+    # NOT a rate limit: the pacer above is the only thing that decides how many
+    # requests per second and per minute leave this process. This decides how
+    # many of them can be WAITING on the vendor at the same time. The per-date
+    # loop used to await one call at a time, so throughput was 1/latency
+    # (~3.5/s measured) however wide the pacer was opened.
+    # Size it as rate x latency: at 25/s and ~285ms that is ~7, so 8. Wider
+    # buys nothing once the pacer is saturated and costs memory, because each
+    # payload in flight is a whole session's option chain.
+    alphavantage_options_concurrency: int = 8
 
     # Simulation & Testing
     simulation_mode: bool = False

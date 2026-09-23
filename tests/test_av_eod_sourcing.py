@@ -10,6 +10,7 @@ HTTP is answered by respx or by a stubbed ``fetch_json``.
 import asyncio
 import socket
 import sqlite3
+from collections import Counter
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -32,8 +33,10 @@ from harvester.core.db import (
     sqlite_file_is_mock,
 )
 from harvester.core.sync import MockDatabaseRefusedError, sync_sqlite_to_postgres
+from harvester.workers.alphavantage.api_client import AlphaVantageError
 from harvester.workers.alphavantage.pacer import AlphaVantagePacer
 from harvester.workers.alphavantage.worker import (
+    DEFAULT_OPTIONS_CONCURRENCY,
     AlphaVantageWorker,
     HarvestReport,
     parse_trade_dates,
@@ -1074,7 +1077,7 @@ def test_default_pacing_settings_are_conservative(monkeypatch: pytest.MonkeyPatc
     monkeypatch.delenv("ALPHAVANTAGE_RPM", raising=False)
     monkeypatch.delenv("ALPHAVANTAGE_MAX_PER_SECOND", raising=False)
     settings = Settings(_env_file=None)
-    assert (settings.alphavantage_rpm, settings.alphavantage_max_per_second) == (9, 1)
+    assert (settings.alphavantage_rpm, settings.alphavantage_max_per_second) == (1100, 25)
 
 
 def test_worker_pacer_takes_its_limits_from_config(tmp_path: Path) -> None:
@@ -1245,3 +1248,265 @@ def test_live_options_path_with_explicit_dates_never_reads_the_clock(tmp_path: P
     asyncio.run(go())
     frozen.assert_not_called()
     assert rows(tmp_path / "clock.db", "SELECT trade_date FROM options_chains_eod") == [("2026-07-02",)]
+
+
+# ---------------------------------------------------------------------------
+# Concurrency: the chain backfill keeps the pacer busy instead of one at a time
+#
+# The per-date loop used to `await` one HISTORICAL_OPTIONS call per date, so
+# however wide the pacer was opened the worker never had more than a single
+# request in flight. Measured against production's own database on 23 Sep 2026:
+# ~3.5 calls a second against a pacer configured for 25, and an 8-day ETA for
+# the remaining backfill. What follows pins the fix by COUNTING requests in
+# flight; nothing here asserts a duration.
+# ---------------------------------------------------------------------------
+
+
+class _ConcurrencyProbe:
+    """fetch_json stub recording how many calls were in flight at the same time."""
+
+    def __init__(self, responder: Any, refuse: set[str] | None = None) -> None:
+        self.responder = responder
+        self.refuse = refuse or set()
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.in_flight = 0
+        self.max_in_flight = 0
+        # Which SYMBOLS overlap, not just how many requests do: a window of
+        # symbols times a window of dates would be the product of the two.
+        self.symbols_in_flight: Counter[str] = Counter()
+        self.max_symbols_in_flight = 0
+
+    async def __call__(self, function: str, params: dict[str, Any] | None = None, is_background: bool = True) -> Any:
+        p = dict(params or {})
+        self.calls.append((function, p))
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        self.symbols_in_flight[p.get("symbol", "")] += 1
+        self.max_symbols_in_flight = max(self.max_symbols_in_flight, len(self.symbols_in_flight))
+        try:
+            # Suspend so a sibling CAN start. A serial caller never has one.
+            await asyncio.sleep(0.02)
+            if p.get("date") in self.refuse:
+                raise AlphaVantageError("refused", status=503, label="http_error")
+            return self.responder(function, p)
+        finally:
+            self.in_flight -= 1
+            sym = p.get("symbol", "")
+            self.symbols_in_flight[sym] -= 1
+            if self.symbols_in_flight[sym] <= 0:
+                del self.symbols_in_flight[sym]
+
+
+_WEEK = ["2026-07-01", "2026-07-02", "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10"]
+
+
+def _one_row_for_the_date_asked(fn: str, p: dict[str, Any]) -> Any:
+    return options_payload([option_row("ZZZT260821C00020000", "20.00", "call", p["date"])])
+
+
+async def test_chain_fetches_overlap_instead_of_going_one_at_a_time(tmp_path: Path) -> None:
+    db_file = tmp_path / "overlap.db"
+    worker = AlphaVantageWorker(settings=fast_settings(db_file))
+    worker.options_concurrency = 4
+    probe = _ConcurrencyProbe(_one_row_for_the_date_asked)
+    worker.client.fetch_json = probe
+
+    async with DatabaseManager(worker.settings) as db:
+        await worker.download_historical_options(db, [SYM], trade_dates=_WEEK)
+
+    # Seven dates at a width of four: four in flight, then three.
+    assert probe.max_in_flight == 4, f"only {probe.max_in_flight} request(s) were ever in flight at once"
+    assert len(probe.calls) == len(_WEEK)
+    # And every session still landed, once.
+    assert rows(db_file, "SELECT trade_date FROM options_chains_eod ORDER BY trade_date") == [(d,) for d in _WEEK]
+
+
+async def test_the_window_is_the_only_thing_the_width_changes(tmp_path: Path) -> None:
+    """Width 1 is the old behaviour, and must still store exactly the same rows."""
+    db_file = tmp_path / "width_one.db"
+    worker = AlphaVantageWorker(settings=fast_settings(db_file))
+    worker.options_concurrency = 1
+    probe = _ConcurrencyProbe(_one_row_for_the_date_asked)
+    worker.client.fetch_json = probe
+
+    async with DatabaseManager(worker.settings) as db:
+        await worker.download_historical_options(db, [SYM], trade_dates=_WEEK)
+
+    assert probe.max_in_flight == 1
+    assert rows(db_file, "SELECT trade_date FROM options_chains_eod ORDER BY trade_date") == [(d,) for d in _WEEK]
+
+
+async def test_a_refused_date_does_not_cancel_the_dates_beside_it(tmp_path: Path) -> None:
+    """A raise inside gather cancels its siblings — calls already paid for at the vendor."""
+    db_file = tmp_path / "refused_sibling.db"
+    worker = AlphaVantageWorker(settings=fast_settings(db_file))
+    worker.options_concurrency = 4
+    # Refuse one date in the middle of the FIRST window, where cancellation would bite.
+    probe = _ConcurrencyProbe(_one_row_for_the_date_asked, refuse={"2026-07-02"})
+    worker.client.fetch_json = probe
+    report = HarvestReport()
+
+    async with DatabaseManager(worker.settings) as db:
+        await worker.download_historical_options(db, [SYM], trade_dates=_WEEK, report=report)
+
+    survivors = [d for d in _WEEK if d != "2026-07-02"]
+    assert rows(db_file, "SELECT trade_date FROM options_chains_eod ORDER BY trade_date") == [(d,) for d in survivors]
+    assert report.fetch_errors == ["HISTORICAL_OPTIONS ZZZT 2026-07-02: status 503 (http_error)"]
+
+
+async def test_reports_stay_in_date_order_however_the_fetches_land(tmp_path: Path) -> None:
+    """Parsing is serial and in date order, so two refusals are reported in order."""
+    db_file = tmp_path / "ordered.db"
+    worker = AlphaVantageWorker(settings=fast_settings(db_file))
+    worker.options_concurrency = 7
+    # Refuse the LAST date of the window and an earlier one: if the report were
+    # built as answers arrive, the order would follow latency, not the calendar.
+    probe = _ConcurrencyProbe(_one_row_for_the_date_asked, refuse={"2026-07-10", "2026-07-02"})
+    worker.client.fetch_json = probe
+    report = HarvestReport()
+
+    async with DatabaseManager(worker.settings) as db:
+        await worker.download_historical_options(db, [SYM], trade_dates=_WEEK, report=report)
+
+    assert report.fetch_errors == [
+        "HISTORICAL_OPTIONS ZZZT 2026-07-02: status 503 (http_error)",
+        "HISTORICAL_OPTIONS ZZZT 2026-07-10: status 503 (http_error)",
+    ]
+
+
+_TWELVE = [f"2026-03-{d:02d}" for d in (2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 16, 17)]
+
+
+async def test_a_worker_nobody_configured_still_fetches_more_than_one_at_a_time(tmp_path: Path) -> None:
+    """The SHIPPED DEFAULT, not a width the test handed in.
+
+    Every other test here sets ``options_concurrency`` itself, so all of them
+    stayed green when the constructor's default was pinned back to 1 — which is
+    the whole regression. This one constructs a worker the way the CLI does and
+    touches nothing.
+    """
+    db_file = tmp_path / "default_width.db"
+    worker = AlphaVantageWorker(settings=fast_settings(db_file))
+    probe = _ConcurrencyProbe(_one_row_for_the_date_asked)
+    worker.client.fetch_json = probe
+
+    async with DatabaseManager(worker.settings) as db:
+        await worker.download_historical_options(db, [SYM], trade_dates=_TWELVE)
+
+    assert DEFAULT_OPTIONS_CONCURRENCY > 1, "the shipped default is serial again"
+    assert probe.max_in_flight == DEFAULT_OPTIONS_CONCURRENCY, (
+        f"a default worker ran {probe.max_in_flight} request(s) at once, "
+        f"not the shipped {DEFAULT_OPTIONS_CONCURRENCY}"
+    )
+
+
+async def test_settings_may_widen_the_window_without_this_module_requiring_the_field(tmp_path: Path) -> None:
+    """`alphavantage_options_concurrency` is read with getattr, so it is optional.
+
+    worker.py must run with or without the entry; when Settings carries it, it wins.
+    """
+
+    class _SettingsWithWindow(Settings):
+        alphavantage_options_concurrency: int = 3
+
+    db_file = tmp_path / "settings_width.db"
+    settings = _SettingsWithWindow(
+        _env_file=None,
+        database_url=f"sqlite:///{db_file}",
+        alphavantage_api_key="TESTKEY",
+        alphavantage_max_per_second=30,
+        alphavantage_rpm=1200,
+    )
+    worker = AlphaVantageWorker(settings=settings)
+    probe = _ConcurrencyProbe(_one_row_for_the_date_asked)
+    worker.client.fetch_json = probe
+
+    async with DatabaseManager(worker.settings) as db:
+        await worker.download_historical_options(db, [SYM], trade_dates=_TWELVE)
+
+    assert probe.max_in_flight == 3, f"Settings asked for 3, got {probe.max_in_flight}"
+
+
+# ---------------------------------------------------------------------------
+# The DAILY run: one session per symbol, so the window has to go to symbols
+#
+# Widening dates fixes the 800-day backfill and does nothing for the daily job,
+# where each symbol's date list is a single call and the SYMBOL loop is what
+# ran one at a time. These two pin both halves — and, just as importantly,
+# that the two windows never multiply: a window of symbols times a window of
+# dates would hold their product in memory, and a session's chain is megabytes.
+# ---------------------------------------------------------------------------
+
+
+def _row_for_symbol_and_date(fn: str, p: dict[str, Any]) -> Any:
+    sym = p["symbol"]
+    return options_payload([option_row(f"{sym}260821C00020000", "20.00", "call", p["date"])])
+
+
+_MANY_SYMBOLS = [f"ZZZ{i:02d}" for i in range(20)]
+
+
+async def test_the_daily_run_fetches_many_symbols_at_once(tmp_path: Path) -> None:
+    db_file = tmp_path / "daily.db"
+    worker = AlphaVantageWorker(settings=fast_settings(db_file))  # shipped width
+    probe = _ConcurrencyProbe(_row_for_symbol_and_date)
+    worker.client.fetch_json = probe
+
+    async with DatabaseManager(worker.settings) as db:
+        await worker.download_historical_options(db, _MANY_SYMBOLS, trade_dates=["2026-07-02"])
+
+    assert probe.max_in_flight == DEFAULT_OPTIONS_CONCURRENCY, (
+        f"{probe.max_in_flight} request(s) in flight on a one-session-per-symbol run"
+    )
+    assert probe.max_symbols_in_flight == DEFAULT_OPTIONS_CONCURRENCY, (
+        "the window did not reach the symbols — this is the daily run's whole bottleneck"
+    )
+    assert len(probe.calls) == len(_MANY_SYMBOLS)
+    stored = rows(db_file, "SELECT DISTINCT symbol FROM options_chains_eod ORDER BY symbol")
+    assert [r[0] for r in stored] == sorted(_MANY_SYMBOLS)
+
+
+async def test_a_deep_backfill_keeps_symbols_serial_so_the_windows_never_multiply(tmp_path: Path) -> None:
+    """12 sessions a symbol already fill a window of 8, so symbols must stay serial."""
+    db_file = tmp_path / "deep.db"
+    worker = AlphaVantageWorker(settings=fast_settings(db_file))
+    probe = _ConcurrencyProbe(_row_for_symbol_and_date)
+    worker.client.fetch_json = probe
+
+    async with DatabaseManager(worker.settings) as db:
+        await worker.download_historical_options(db, ["ZZZA", "ZZZB", "ZZZC"], trade_dates=_TWELVE)
+
+    assert probe.max_symbols_in_flight == 1, (
+        f"{probe.max_symbols_in_flight} symbols overlapped; with {len(_TWELVE)} sessions each that is "
+        f"up to {probe.max_symbols_in_flight * len(_TWELVE)} chains held at once"
+    )
+    # ...and the DATES still overlap, which is what the backfill needs.
+    assert probe.max_in_flight == DEFAULT_OPTIONS_CONCURRENCY
+
+
+async def test_refusals_are_reported_in_symbol_order_when_symbols_run_together(tmp_path: Path) -> None:
+    db_file = tmp_path / "sym_order.db"
+    worker = AlphaVantageWorker(settings=fast_settings(db_file))
+    # One date, so symbols share the window; refuse it for two of them.
+    report = HarvestReport()
+
+    class _RefuseSymbols(_ConcurrencyProbe):
+        async def __call__(self, function, params=None, is_background=True):  # type: ignore[override]
+            p = dict(params or {})
+            if p.get("symbol") in {"ZZZ03", "ZZZ01"}:
+                self.calls.append((function, p))
+                await asyncio.sleep(0.01)
+                raise AlphaVantageError("refused", status=503, label="http_error")
+            return await super().__call__(function, params, is_background)
+
+    worker.client.fetch_json = _RefuseSymbols(_row_for_symbol_and_date)
+
+    async with DatabaseManager(worker.settings) as db:
+        await worker.download_historical_options(
+            db, _MANY_SYMBOLS[:5], trade_dates=["2026-07-02"], report=report
+        )
+
+    assert report.fetch_errors == [
+        "HISTORICAL_OPTIONS ZZZ01 2026-07-02: status 503 (http_error)",
+        "HISTORICAL_OPTIONS ZZZ03 2026-07-02: status 503 (http_error)",
+    ]
