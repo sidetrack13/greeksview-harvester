@@ -22,11 +22,13 @@ Honesty rules for stored rows:
     bar is written to PostgreSQL (see harvester.core.db.as_vendor_eastern).
 """
 
+import asyncio
 import json
 import logging
 import re
 import time
 from collections import Counter
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -39,6 +41,14 @@ from harvester.workers.alphavantage.api_client import AlphaVantageClient, AlphaV
 from harvester.workers.alphavantage.pacer import AlphaVantagePacer
 
 logger = logging.getLogger("harvester.workers.alphavantage")
+
+# HOW MANY CHAIN FETCHES MAY BE IN FLIGHT AT ONCE. Not a rate limit — the pacer
+# is the only thing that decides requests per second and per minute. This only
+# decides how many of them may be WAITING on the vendor together, and the loop
+# below used to allow exactly one, so throughput was 1/latency whatever the
+# pacer allowed. Settings may override it with `alphavantage_options_concurrency`;
+# read with getattr so this module works with or without that entry.
+DEFAULT_OPTIONS_CONCURRENCY = 8
 
 DEFAULT_UNIVERSE = ["SPY", "QQQ", "IWM", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA"]
 
@@ -194,6 +204,8 @@ class AlphaVantageWorker(BaseWorker):
     def __init__(self, settings: Settings | None = None, config: Any | None = None):
         super().__init__(settings or config or get_settings())
         self.settings: Settings = self.config
+        configured = getattr(self.settings, "alphavantage_options_concurrency", None)
+        self.options_concurrency: int = max(1, int(configured)) if configured else DEFAULT_OPTIONS_CONCURRENCY
         self.pacer = AlphaVantagePacer(
             max_per_second=self.settings.alphavantage_max_per_second,
             cooldown_ms=self.settings.alphavantage_cooldown_ms,
@@ -483,6 +495,56 @@ class AlphaVantageWorker(BaseWorker):
             return None
         return record
 
+    async def _one_chain(
+        self, sym: str, trade_date: str
+    ) -> tuple[str, dict[str, Any] | None, AlphaVantageError | None]:
+        """One HISTORICAL_OPTIONS call, never raising.
+
+        A raise inside ``asyncio.gather`` cancels its siblings, and a cancelled
+        sibling is a call already paid for at the vendor and thrown away. The
+        error is carried back instead and re-raised as a report line by the
+        caller, in date order.
+        """
+        try:
+            data = await self.client.fetch_json("HISTORICAL_OPTIONS", {"symbol": sym, "date": trade_date})
+        except AlphaVantageError as exc:
+            return trade_date, None, exc
+        return trade_date, data, None
+
+    async def _chains_in_date_order(
+        self, sym: str, dates: list[str], rep: HarvestReport
+    ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        """Yield ``(date, payload)`` in DATE ORDER, fetching a window at a time.
+
+        ONLY THE NETWORK IS PARALLEL. This loop used to await one call per
+        date, so however wide the pacer was opened the worker never had more
+        than a single request in flight and ran at 1/latency — measured at
+        ~3.5 a second against a pacer allowing 25. Parsing, the ``spots``
+        cache, ``records`` and every ``rep`` counter stay in the caller,
+        serial and in date order, so a widened window changes THROUGHPUT and
+        nothing else about what gets stored or reported.
+
+        The window is a window and not one big gather because each payload is
+        a whole day's chain: 550 of them in flight would be held in memory at
+        once. The pacer, not this number, is what bounds the request rate —
+        the window only has to be wide enough to keep the pacer busy
+        (rate x latency), and wider costs memory without buying calls.
+        """
+        width = max(1, int(self.options_concurrency))
+        for start in range(0, len(dates), width):
+            window = dates[start : start + width]
+            settled = await asyncio.gather(*(self._one_chain(sym, dt) for dt in window))
+            for trade_date, data, exc in settled:
+                if exc is not None:
+                    logger.warning("Options chain fetch error for %s on %s: %s", sym, trade_date, exc)
+                    rep.fetch_errors.append(
+                        f"HISTORICAL_OPTIONS {sym} {trade_date}: status {exc.status} ({exc.label})"
+                    )
+                    continue
+                if data is None:  # pragma: no cover - defensive; _one_chain pairs None with an exc
+                    continue
+                yield trade_date, data
+
     async def download_historical_options(
         self,
         db: DatabaseManager,
@@ -575,13 +637,7 @@ class AlphaVantageWorker(BaseWorker):
                             )
             else:
                 spots: dict[str, float | None] = {}
-                for dt in needed_dates:
-                    try:
-                        data = await self.client.fetch_json("HISTORICAL_OPTIONS", {"symbol": sym, "date": dt})
-                    except AlphaVantageError as exc:
-                        logger.warning("Options chain fetch error for %s on %s: %s", sym, dt, exc)
-                        rep.fetch_errors.append(f"HISTORICAL_OPTIONS {sym} {dt}: status {exc.status} ({exc.label})")
-                        continue
+                async for dt, data in self._chains_in_date_order(sym, needed_dates, rep):
                     chain = data.get("data")
                     if not isinstance(chain, list) or not chain:
                         rep.empty_responses.append(f"{sym} {dt}")
