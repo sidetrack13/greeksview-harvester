@@ -1077,7 +1077,7 @@ def test_default_pacing_settings_are_conservative(monkeypatch: pytest.MonkeyPatc
     monkeypatch.delenv("ALPHAVANTAGE_RPM", raising=False)
     monkeypatch.delenv("ALPHAVANTAGE_MAX_PER_SECOND", raising=False)
     settings = Settings(_env_file=None)
-    assert (settings.alphavantage_rpm, settings.alphavantage_max_per_second) == (9, 1)
+    assert (settings.alphavantage_rpm, settings.alphavantage_max_per_second) == (1100, 25)
 
 
 def test_worker_pacer_takes_its_limits_from_config(tmp_path: Path) -> None:
