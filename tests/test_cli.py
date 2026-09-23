@@ -83,6 +83,42 @@ def test_cli_stats_with_data_and_default_db() -> None:
         assert "Chamber: SENATE" in result.stdout
 
 
+def test_cli_stats_still_counts_retired_feeds_and_labels_them_retired() -> None:
+    """`stats` keeps counting the two retired tables so an operator can see rows still stored.
+
+    The counts are deliberately kept: they are the only place the stored rows are
+    visible before the owner purges them. Each is labelled retired so nobody reads
+    the row as a feed that is still collecting.
+    """
+    mock_stats = {
+        "total_filings": 1,
+        "total_transactions": 2,
+        "distinct_tickers": 3,
+        "by_type": {},
+        "by_chamber": {},
+        "finra_otc": 1234,
+        "cboe_options": 567,
+        "macro_indicators": 89,
+    }
+    with patch("harvester.cli.DatabaseManager.get_stats", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_stats
+        result = runner.invoke(app, ["stats", "--db-url", "sqlite:///:memory:"])
+
+    assert result.exit_code == 0
+    out = " ".join(result.stdout.split())
+    # The stored counts are still reported.
+    assert "1234" in out
+    assert "567" in out
+    # And each of the two rows says it is retired.
+    for label in ("FINRA OTC / Dark Pool Records", "CBOE Daily Options Records"):
+        assert label in out
+        tail = out.split(label, 1)[1]
+        assert tail.startswith(" (retired, no longer collected)"), f"{label} is not labelled retired"
+    # A live feed's row carries no such label, so the label distinguishes something.
+    live_tail = out.split("FRED Macro Indicators", 1)[1]
+    assert not live_tail.startswith(" (retired")
+
+
 def test_cli_house_default_db_url_and_no_mock() -> None:
     mock_report = CrawlReport(year=2024, filtered_ptrs=0)
     with patch("harvester.cli.HousePipeline.run", new_callable=AsyncMock) as mock_run:

@@ -26,6 +26,28 @@ class MockDatabaseRefusedError(RuntimeError):
     """Raised when sync-pg is pointed at a SQLite file a mock run has written to."""
 
 
+class RetiredSyncTableError(ValueError):
+    """Raised when sync-pg is asked by name for a table that is no longer synchronised."""
+
+
+# Tables withdrawn from the sync, with the reason a caller is shown. Their
+# collectors invented rows on any failed fetch, and the data itself is not
+# licensed for a paid product, so no further rows may reach PostgreSQL. Asking
+# for one by name refuses rather than quietly syncing nothing. The local SQLite
+# tables and the rows already in PostgreSQL are deliberately left in place;
+# purging them is a separate, owner-run step.
+RETIRED_SYNC_TABLES: dict[str, str] = {
+    "cboe_daily_options": (
+        "Cboe's data terms require Cboe's written consent for commercial use, which GreeksView "
+        "does not have, and the retired cboe_options worker fabricated rows on any failed fetch."
+    ),
+    "finra_otc_volume": (
+        "FINRA's data terms permit non-commercial use only, and the retired finra_darkpool worker "
+        "fabricated rows on any failed fetch."
+    ),
+}
+
+
 _parse_date = to_pg_date
 
 
@@ -76,10 +98,24 @@ async def sync_sqlite_to_postgres(
     """Synchronize all or selected harvested tables from local SQLite to PostgreSQL.
 
     If days_back is provided (e.g. 90), time-series tables (options_chains_eod,
-    stock_bars_daily, cboe_daily_options) only sync records with trade_date >= (today - days_back).
+    stock_bars_daily) only sync records with trade_date >= (today - days_back).
+
+    Tables in RETIRED_SYNC_TABLES are never synchronised. Naming one in
+    target_tables raises RetiredSyncTableError before any database is opened.
 
     Returns a summary mapping table names to dicts with {sqlite_count, synced_count, duration_seconds}.
     """
+    # Refuse a retired table before touching any file or database, so the refusal
+    # never depends on the source existing or on PostgreSQL being reachable.
+    if target_tables:
+        retired = [t for t in target_tables if t in RETIRED_SYNC_TABLES]
+        if retired:
+            detail = "; ".join(f"{t}: {RETIRED_SYNC_TABLES[t]}" for t in retired)
+            raise RetiredSyncTableError(
+                f"Refusing to sync retired table(s) {', '.join(retired)}. {detail} "
+                "Existing rows are left untouched; purging them is a separate step."
+            )
+
     db_file = Path(sqlite_path)
     if not db_file.exists():
         raise FileNotFoundError(f"Source SQLite file not found: {sqlite_path}")
@@ -122,8 +158,6 @@ async def sync_sqlite_to_postgres(
         "congressional_filings",
         "congressional_transactions",
         "macro_indicators",
-        "cboe_daily_options",
-        "finra_otc_volume",
         "insider_trades",
         "institutional_holdings",
         "stock_bars_daily",
@@ -147,7 +181,7 @@ async def sync_sqlite_to_postgres(
                 logger.info("Table %s does not exist in SQLite; skipping", tbl)
                 continue
 
-            if cutoff_date and tbl in ("options_chains_eod", "stock_bars_daily", "cboe_daily_options"):
+            if cutoff_date and tbl in ("options_chains_eod", "stock_bars_daily"):
                 row_count = cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE trade_date >= ?", (cutoff_date,)).fetchone()[
                     0
                 ]
@@ -171,12 +205,6 @@ async def sync_sqlite_to_postgres(
                 synced = await _sync_congressional_transactions(sqlite_conn, pg_manager._pg_pool, batch_size)
             elif tbl == "macro_indicators":
                 synced = await _sync_macro_indicators(sqlite_conn, pg_manager._pg_pool, batch_size)
-            elif tbl == "cboe_daily_options":
-                synced = await _sync_cboe_daily_options(
-                    sqlite_conn, pg_manager._pg_pool, batch_size, cutoff_date=cutoff_date
-                )
-            elif tbl == "finra_otc_volume":
-                synced = await _sync_finra_otc_volume(sqlite_conn, pg_manager._pg_pool, batch_size)
             elif tbl == "insider_trades":
                 synced = await _sync_insider_trades(sqlite_conn, pg_manager._pg_pool, batch_size)
             elif tbl == "institutional_holdings":
@@ -353,107 +381,6 @@ async def _sync_macro_indicators(sqlite_conn: sqlite3.Connection, pg_pool: Any, 
                         val,
                         _clean_str(r["frequency"]),
                         _clean_str(r["units"]),
-                    )
-                )
-            if batch:
-                await conn.executemany(query, batch)
-                total += len(batch)
-    return total
-
-
-async def _sync_cboe_daily_options(
-    sqlite_conn: sqlite3.Connection,
-    pg_pool: Any,
-    batch_size: int,
-    cutoff_date: str | None = None,
-) -> int:
-    query = """
-    INSERT INTO cboe_daily_options (
-        id, trade_date, total_call_volume, total_put_volume, total_volume,
-        equity_pc_ratio, index_pc_ratio, total_pc_ratio, vix_volume, created_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-    ON CONFLICT (trade_date) DO UPDATE SET
-        total_call_volume = EXCLUDED.total_call_volume,
-        total_put_volume = EXCLUDED.total_put_volume,
-        total_volume = EXCLUDED.total_volume,
-        equity_pc_ratio = EXCLUDED.equity_pc_ratio,
-        index_pc_ratio = EXCLUDED.index_pc_ratio,
-        total_pc_ratio = EXCLUDED.total_pc_ratio,
-        vix_volume = EXCLUDED.vix_volume
-    """
-    cur = sqlite_conn.cursor()
-    sql = "SELECT id, trade_date, total_call_volume, total_put_volume, total_volume, equity_pc_ratio, index_pc_ratio, total_pc_ratio, vix_volume FROM cboe_daily_options"
-    params: list[Any] = []
-    if cutoff_date:
-        sql += " WHERE trade_date >= ?"
-        params.append(cutoff_date)
-    cur.execute(sql, params)
-    total = 0
-    async with pg_pool.acquire() as conn:
-        while True:
-            rows = cur.fetchmany(batch_size)
-            if not rows:
-                break
-            batch = []
-            for r in rows:
-                t_date = _parse_date(r["trade_date"])
-                if t_date is None:
-                    continue
-                batch.append(
-                    (
-                        _clean_str(r["id"]),
-                        t_date,
-                        float(r["total_call_volume"] or 0),
-                        float(r["total_put_volume"] or 0),
-                        float(r["total_volume"] or 0),
-                        float(r["equity_pc_ratio"] or 0) if r["equity_pc_ratio"] is not None else None,
-                        float(r["index_pc_ratio"] or 0) if r["index_pc_ratio"] is not None else None,
-                        float(r["total_pc_ratio"] or 0) if r["total_pc_ratio"] is not None else None,
-                        float(r["vix_volume"] or 0) if r["vix_volume"] is not None else None,
-                    )
-                )
-            if batch:
-                await conn.executemany(query, batch)
-                total += len(batch)
-    return total
-
-
-async def _sync_finra_otc_volume(sqlite_conn: sqlite3.Connection, pg_pool: Any, batch_size: int) -> int:
-    query = """
-    INSERT INTO finra_otc_volume (
-        id, symbol, week_start_date, tier, otc_volume, total_trades,
-        total_market_volume, dark_pool_share_pct, created_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-    ON CONFLICT (id) DO UPDATE SET
-        otc_volume = EXCLUDED.otc_volume,
-        total_trades = EXCLUDED.total_trades,
-        dark_pool_share_pct = EXCLUDED.dark_pool_share_pct
-    """
-    cur = sqlite_conn.cursor()
-    cur.execute(
-        "SELECT id, symbol, week_start_date, tier, otc_volume, total_trades, total_market_volume, dark_pool_share_pct FROM finra_otc_volume"
-    )
-    total = 0
-    async with pg_pool.acquire() as conn:
-        while True:
-            rows = cur.fetchmany(batch_size)
-            if not rows:
-                break
-            batch = []
-            for r in rows:
-                w_date = _parse_date(r["week_start_date"])
-                if w_date is None:
-                    continue
-                batch.append(
-                    (
-                        _clean_str(r["id"]),
-                        _clean_str(r["symbol"]),
-                        w_date,
-                        _clean_str(r["tier"]),
-                        float(r["otc_volume"] or 0),
-                        float(r["total_trades"] or 0),
-                        float(r["total_market_volume"] or 0) if r["total_market_volume"] is not None else None,
-                        float(r["dark_pool_share_pct"] or 0) if r["dark_pool_share_pct"] is not None else None,
                     )
                 )
             if batch:

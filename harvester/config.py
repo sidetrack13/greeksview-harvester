@@ -50,8 +50,6 @@ class Settings(BaseSettings):
     # Runtime & Historical Depth Settings
     default_year: int = 2024
     stock_act_inception_year: int = 2012
-    cboe_default_days_back: int = 252  # 1 full trading year of daily P/C flow
-    finra_default_weeks_back: int = 52  # 1 full year of weekly off-exchange volume
     crawler_batch_size: int = 50
     max_concurrent_downloads: int = 10
     request_timeout_seconds: float = 30.0
