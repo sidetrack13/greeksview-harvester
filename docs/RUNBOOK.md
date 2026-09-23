@@ -23,8 +23,17 @@ GreeksView Harvester is the **authoritative single source of truth** for sourcin
 | **`congressional`** | US House & Senate | House Clerk PDF Disclosures<br>Senate eFD Periodic Transaction Reports | `congressional_disclosures`<br>`congressional_trades` | **Every 4 Hours**<br>(Accelerated 15-min sweep Friday afternoons) |
 | **`sec_edgar`** | SEC EDGAR Stream | Form 4 (Insider Transactions)<br>Form 8-K (Material Events) | `sec_insider_trades`<br>`sec_material_events` | **Every 15 Minutes**<br>(During market hours 9:30 AM – 4:30 PM ET) |
 | **`fred_macro`** | St. Louis Fed FRED | CPI, Fed Funds Effective Rate, 10Y/2Y Yield Curves, GDP, Unemployment | `macro_indicators` | **Daily at 9:00 AM ET** |
-| **`finra_darkpool`** | FINRA TRF | OTC Non-ATS Short Sale & Dark Pool Trading Volumes | `darkpool_volume_daily` | **Weekly on Monday morning** |
-| **`cboe_options`** | CBOE Exchange | Total Exchange Options Volume & Put/Call Ratios | `cboe_options_volume` | **Daily at 5:00 PM ET** |
+
+### Retired Workers
+
+`finra_darkpool` and `cboe_options` have been removed from this repository. Do not schedule them: `harvester run finra_darkpool` and `harvester run cboe_options` now exit with a non-zero status and print the reason.
+
+| Retired Worker | Why it was withdrawn |
+| :--- | :--- |
+| **`finra_darkpool`** | FINRA's data terms permit non-commercial use only, and GreeksView is a paid product. The worker also wrote an invented record whenever a fetch failed, so a network blip produced a row indistinguishable from a real one. |
+| **`cboe_options`** | Cboe's data terms require Cboe's written consent for commercial use, which GreeksView does not have. The worker also wrote an invented record whenever a fetch failed, and derived the equity put/call ratio as `total * 0.78` even on a successful fetch. |
+
+Their tables, `finra_otc_volume` and `cboe_daily_options`, are still in the schema so existing rows can be read and counted (`harvester stats` shows them labelled retired), but nothing writes them and `sync-pg` no longer copies them. Purging the rows already in production PostgreSQL is a separate, owner-run step.
 
 ---
 
@@ -221,12 +230,6 @@ uv run harvester run sec_edgar --days-back 7
 # FRED Macroeconomic Indicators
 uv run harvester run fred_macro --days-back 30
 
-# FINRA Dark Pool & Short Volume Aggregates
-uv run harvester run finra_darkpool --weeks-back 4
-
-# CBOE Total Options Volume & Put/Call Ratios
-uv run harvester run cboe_options --days-back 10
-
 # Execute all registered workers sequentially
 uv run harvester run-all
 ```
@@ -264,25 +267,19 @@ WORKDIR=/opt/greeksview-harvester
 # 3. SEC EDGAR Insider Trades (Every 15 mins during market hours, Mon-Fri)
 */15 9-16 * * 1-5 cd $WORKDIR && uv run harvester run sec_edgar --days-back 1 >> /var/log/harvester_sec.log 2>&1
 
-# 4. CBOE Options Volume & P/C Ratios (5:00 PM ET, Mon-Fri)
-0 17 * * 1-5 cd $WORKDIR && uv run harvester run cboe_options --days-back 1 >> /var/log/harvester_cboe.log 2>&1
-
-# 5. Off-Market Daily Stock Bars Sweep (8:00 PM ET, Mon-Fri)
+# 4. Off-Market Daily Stock Bars Sweep (8:00 PM ET, Mon-Fri)
 0 20 * * 1-5 cd $WORKDIR && uv run harvester run alphavantage --dataset daily >> /var/log/harvester_daily.log 2>&1
 
-# 6. Off-Market Settled Options Chains Sweep (9:00 PM ET, Mon-Fri)
+# 5. Off-Market Settled Options Chains Sweep (9:00 PM ET, Mon-Fri)
 0 21 * * 1-5 cd $WORKDIR && uv run harvester run alphavantage --dataset options --days-back 1 >> /var/log/harvester_options.log 2>&1
 
-# 7. Congressional STOCK Act Disclosures (Every 4 hours daily)
+# 6. Congressional STOCK Act Disclosures (Every 4 hours daily)
 0 */4 * * * cd $WORKDIR && uv run harvester run congressional >> /var/log/harvester_congress.log 2>&1
 
-# 8. FINRA Dark Pool Volume (Monday 6:00 AM ET)
-0 6 * * 1 cd $WORKDIR && uv run harvester run finra_darkpool --weeks-back 2 >> /var/log/harvester_finra.log 2>&1
-
-# 9. Weekend Fundamentals & Financial Statements Backfill (Saturday 2:00 AM ET)
+# 7. Weekend Fundamentals & Financial Statements Backfill (Saturday 2:00 AM ET)
 0 2 * * 6 cd $WORKDIR && uv run harvester run alphavantage --dataset fundamentals >> /var/log/harvester_fund.log 2>&1
 
-# 10. Database Synchronization to Production PostgreSQL (Hourly at minute 45)
+# 8. Database Synchronization to Production PostgreSQL (Hourly at minute 45)
 45 * * * * cd $WORKDIR && uv run harvester sync-pg >> /var/log/harvester_sync.log 2>&1
 ```
 
@@ -309,7 +306,7 @@ Data accumulated in local SQLite is synchronized incrementally into PostgreSQL:
 # Synchronize all tables to production PostgreSQL (unrestricted history)
 uv run harvester sync-pg
 
-# Synchronize trailing 90 days of time-series data (options_chains_eod, stock_bars_daily, cboe_daily_options)
+# Synchronize trailing 90 days of time-series data (options_chains_eod, stock_bars_daily)
 uv run harvester sync-pg --days-back 90
 
 # Synchronize only settled options chains within the last 90 trading days

@@ -10,6 +10,8 @@ from typer.testing import CliRunner
 
 from harvester.cli import app
 from harvester.core.sync import (
+    RETIRED_SYNC_TABLES,
+    RetiredSyncTableError,
     _clean_str,
     _parse_date,
     _parse_datetime,
@@ -17,6 +19,8 @@ from harvester.core.sync import (
 )
 
 runner = CliRunner()
+
+RETIRED_TABLES = ("cboe_daily_options", "finra_otc_volume")
 
 
 def test_clean_str():
@@ -204,10 +208,19 @@ async def test_sync_sqlite_to_postgres_execution(tmp_path):
         assert summary["congressional_filings"]["synced_count"] == 1
         assert summary["congressional_transactions"]["synced_count"] == 1
         assert summary["macro_indicators"]["synced_count"] == 1
-        assert summary["cboe_daily_options"]["synced_count"] == 1
-        assert summary["finra_otc_volume"]["synced_count"] == 1
         assert summary["insider_trades"]["synced_count"] == 1
         assert summary["institutional_holdings"]["synced_count"] == 1
+
+        # The two retired tables are populated in this same SQLite file (one row each,
+        # seeded above) and a default sync must copy neither: not in the summary, and
+        # no statement naming them reached PostgreSQL.
+        assert "cboe_daily_options" not in summary
+        assert "finra_otc_volume" not in summary
+        executed_sql = [c.args[0] for c in mock_pg_conn.executemany.call_args_list]
+        assert executed_sql  # presence: the live tables did reach PostgreSQL
+        assert any("congressional_filings" in sql for sql in executed_sql)
+        assert not any("cboe_daily_options" in sql for sql in executed_sql)
+        assert not any("finra_otc_volume" in sql for sql in executed_sql)
 
         # Verify no null bytes reached PostgreSQL executemany calls
         for call in mock_pg_conn.executemany.call_args_list:
@@ -434,8 +447,9 @@ async def test_sync_sqlite_to_postgres_filters_and_invalid_rows(tmp_path):
         assert summary2["congressional_transactions"]["synced_count"] == 0
         assert summary2["institutional_holdings"]["synced_count"] == 0
         assert summary2["insider_trades"]["synced_count"] == 0
-        assert summary2["cboe_daily_options"]["synced_count"] == 0
-        assert summary2["finra_otc_volume"]["synced_count"] == 0
+        # Both retired tables hold a row here and are still skipped entirely.
+        assert "cboe_daily_options" not in summary2
+        assert "finra_otc_volume" not in summary2
 
 
 @pytest.mark.asyncio
@@ -608,19 +622,6 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
     )
 
     cur.execute("""
-    CREATE TABLE cboe_daily_options (
-        id TEXT PRIMARY KEY, trade_date TEXT, total_call_volume REAL, total_put_volume REAL,
-        total_volume REAL, equity_pc_ratio REAL, index_pc_ratio REAL, total_pc_ratio REAL, vix_volume REAL
-    )
-    """)
-    cur.execute(
-        "INSERT INTO cboe_daily_options VALUES ('cboe_recent', ?, 1000, 800, 1800, 0.65, 1.2, 0.8, 500)", (recent_date,)
-    )
-    cur.execute(
-        "INSERT INTO cboe_daily_options VALUES ('cboe_old', ?, 900, 700, 1600, 0.70, 1.1, 0.85, 450)", (old_date,)
-    )
-
-    cur.execute("""
     CREATE TABLE options_chains_eod (
         contract_id TEXT, symbol TEXT, trade_date TEXT, expiration TEXT, strike REAL, option_type TEXT,
         last_price REAL, mark_price REAL, bid REAL, ask REAL, volume INTEGER, open_interest INTEGER,
@@ -685,14 +686,12 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
         summary_filtered = await sync_sqlite_to_postgres(
             pg_url="postgresql://user:pass@localhost:5432/testdb",
             sqlite_path=db_path,
-            target_tables=["stock_bars_daily", "cboe_daily_options", "options_chains_eod", "stock_bars_intraday"],
+            target_tables=["stock_bars_daily", "options_chains_eod", "stock_bars_intraday"],
             days_back=30,
         )
 
         assert summary_filtered["stock_bars_daily"]["sqlite_count"] == 1
         assert summary_filtered["stock_bars_daily"]["synced_count"] == 1
-        assert summary_filtered["cboe_daily_options"]["sqlite_count"] == 1
-        assert summary_filtered["cboe_daily_options"]["synced_count"] == 1
         assert summary_filtered["options_chains_eod"]["sqlite_count"] == 1
         assert summary_filtered["options_chains_eod"]["synced_count"] == 1
         assert summary_filtered["stock_bars_intraday"]["sqlite_count"] == 1
@@ -713,14 +712,12 @@ async def test_sync_sqlite_to_postgres_days_back_filtering(tmp_path):
         summary_all = await sync_sqlite_to_postgres(
             pg_url="postgresql://user:pass@localhost:5432/testdb",
             sqlite_path=db_path,
-            target_tables=["stock_bars_daily", "cboe_daily_options", "options_chains_eod", "stock_bars_intraday"],
+            target_tables=["stock_bars_daily", "options_chains_eod", "stock_bars_intraday"],
             days_back=None,
         )
 
         assert summary_all["stock_bars_daily"]["sqlite_count"] == 2
         assert summary_all["stock_bars_daily"]["synced_count"] == 2
-        assert summary_all["cboe_daily_options"]["sqlite_count"] == 2
-        assert summary_all["cboe_daily_options"]["synced_count"] == 2
         assert summary_all["options_chains_eod"]["sqlite_count"] == 2
         assert summary_all["options_chains_eod"]["synced_count"] == 2
         assert summary_all["stock_bars_intraday"]["sqlite_count"] == 2
@@ -799,3 +796,142 @@ async def test_sync_sqlite_to_postgres_insufficient_privilege(tmp_path):
             sqlite_path=db_path,
         )
         assert "congressional_filings" in summary
+
+
+def _seed_retired_and_live_tables(db_path: str) -> None:
+    """Create a throwaway SQLite file holding a row in each retired table and a live one."""
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE macro_indicators (
+        id TEXT PRIMARY KEY, series_id TEXT, indicator_name TEXT, date TEXT,
+        value REAL, frequency TEXT, units TEXT
+    )
+    """)
+    cur.execute(
+        "INSERT INTO macro_indicators VALUES ('FAKESERIES_2024-05-15', 'FAKESERIES', 'Test Rate', '2024-05-15', 1.23, 'daily', 'Percent')"
+    )
+    cur.execute("""
+    CREATE TABLE cboe_daily_options (
+        id TEXT PRIMARY KEY, trade_date TEXT, total_call_volume REAL, total_put_volume REAL,
+        total_volume REAL, equity_pc_ratio REAL, index_pc_ratio REAL, total_pc_ratio REAL, vix_volume REAL
+    )
+    """)
+    cur.execute(
+        "INSERT INTO cboe_daily_options VALUES ('cboe_2024-05-15', '2024-05-15', 11, 22, 33, 0.44, 0.55, 0.66, 77)"
+    )
+    cur.execute("""
+    CREATE TABLE finra_otc_volume (
+        id TEXT PRIMARY KEY, symbol TEXT, week_start_date TEXT, tier TEXT,
+        otc_volume REAL, total_trades REAL, total_market_volume REAL, dark_pool_share_pct REAL
+    )
+    """)
+    cur.execute("INSERT INTO finra_otc_volume VALUES ('finra_1', 'ZZTESTCO', '2024-05-13', 'Tier 1', 11, 22, 33, 44.0)")
+    conn.commit()
+    conn.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("table", RETIRED_TABLES)
+async def test_sync_refuses_a_retired_table_asked_for_by_name(tmp_path, table):
+    """Naming a retired table refuses with a reason, and never opens a database to do it."""
+    db_path = str(tmp_path / "retired_by_name.db")
+    _seed_retired_and_live_tables(db_path)
+
+    with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        with pytest.raises(RetiredSyncTableError) as exc:
+            await sync_sqlite_to_postgres(
+                pg_url="postgresql://user:pass@localhost:5432/testdb",
+                sqlite_path=db_path,
+                target_tables=[table],
+            )
+        # Refusing must not be a silent no-op, and must not dial PostgreSQL.
+        mock_create_pool.assert_not_called()
+
+    message = str(exc.value)
+    assert table in message
+    assert "Refusing to sync" in message
+    assert RETIRED_SYNC_TABLES[table] in message
+
+
+@pytest.mark.asyncio
+async def test_sync_refuses_when_a_retired_table_rides_along_with_a_live_one(tmp_path):
+    """One retired name in the list refuses the whole call rather than silently dropping it."""
+    db_path = str(tmp_path / "retired_mixed.db")
+    _seed_retired_and_live_tables(db_path)
+
+    with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        with pytest.raises(RetiredSyncTableError) as exc:
+            await sync_sqlite_to_postgres(
+                pg_url="postgresql://user:pass@localhost:5432/testdb",
+                sqlite_path=db_path,
+                target_tables=["macro_indicators", "finra_otc_volume"],
+            )
+        mock_create_pool.assert_not_called()
+    assert "finra_otc_volume" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_default_sync_copies_a_live_table_and_neither_retired_one(tmp_path):
+    """A default sync-pg over a file holding all three tables copies only the live one."""
+    db_path = str(tmp_path / "default_sync.db")
+    _seed_retired_and_live_tables(db_path)
+
+    mock_pg_conn = AsyncMock()
+    mock_pg_conn.execute = AsyncMock()
+    mock_pg_conn.executemany = AsyncMock()
+
+    class MockPoolCtx:
+        async def __aenter__(self):
+            return mock_pg_conn
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value = MockPoolCtx()
+    mock_pool.close = AsyncMock()
+
+    with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        mock_create_pool.return_value = mock_pool
+        summary = await sync_sqlite_to_postgres(
+            pg_url="postgresql://user:pass@localhost:5432/testdb",
+            sqlite_path=db_path,
+        )
+
+    # Presence: the live table was read and written.
+    assert summary["macro_indicators"]["sqlite_count"] == 1
+    assert summary["macro_indicators"]["synced_count"] == 1
+    # Absence: neither retired table was reported or written, though both hold a row.
+    executed_sql = [c.args[0] for c in mock_pg_conn.executemany.call_args_list]
+    assert any("macro_indicators" in sql for sql in executed_sql)
+    for table in RETIRED_TABLES:
+        assert table not in summary
+        assert not any(table in sql for sql in executed_sql)
+
+
+@pytest.mark.parametrize("table", RETIRED_TABLES)
+def test_cli_sync_pg_refuses_a_retired_table(tmp_path, table):
+    """`sync-pg --table <retired>` exits 1 with the reason; the real sync function is called."""
+    db_path = str(tmp_path / "cli_retired.db")
+    _seed_retired_and_live_tables(db_path)
+
+    with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
+        res = runner.invoke(
+            app,
+            [
+                "sync-pg",
+                "--pg-url",
+                "postgresql://user:pass@localhost:5432/test",
+                "--sqlite-path",
+                db_path,
+                "--table",
+                table,
+            ],
+        )
+        mock_create_pool.assert_not_called()
+
+    assert res.exit_code == 1
+    assert "Sync Failed:" in res.stdout
+    assert "Refusing to sync" in " ".join(res.stdout.split())
+    assert "Synchronization Results Summary" not in res.stdout

@@ -1177,7 +1177,12 @@ class DatabaseManager:
         return count
 
     async def upsert_finra_otc_volume(self, records: list[dict[str, Any]]) -> int:
-        """Upsert weekly FINRA OTC volume records."""
+        """Upsert weekly FINRA OTC volume records.
+
+        The finra_darkpool worker that called this was retired: FINRA's terms permit
+        non-commercial use only. Nothing in the tree calls this method now. It is kept
+        only so the rows already stored stay readable until the owner purges them.
+        """
         if not records:
             return 0
         count = 0
@@ -1244,7 +1249,12 @@ class DatabaseManager:
         return count
 
     async def upsert_cboe_daily_options(self, records: list[dict[str, Any]]) -> int:
-        """Upsert CBOE daily options statistics."""
+        """Upsert CBOE daily options statistics.
+
+        The cboe_options worker that called this was retired: Cboe's terms require their
+        written consent for commercial use. Nothing in the tree calls this method now. It
+        is kept only so the rows already stored stay readable until the owner purges them.
+        """
         if not records:
             return 0
         count = 0

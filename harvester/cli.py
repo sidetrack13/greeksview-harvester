@@ -103,9 +103,7 @@ def list_command() -> None:
 def run_command(
     worker_name: Annotated[
         str,
-        typer.Argument(
-            help="Name of worker (congressional, sec_edgar, finra_darkpool, cboe_options, fred_macro, alphavantage)"
-        ),
+        typer.Argument(help="Name of worker (congressional, sec_edgar, fred_macro, alphavantage)"),
     ],
     limit: Annotated[
         int | None, typer.Option("--limit", "-l", help="Record or symbol limit (default: None for max history)")
@@ -119,11 +117,8 @@ def run_command(
         int | None,
         typer.Option(
             "--days-back",
-            help="Historical trading days back for CBOE or Alpha Vantage Options (default: 1 snapshot, or specify N days). With --sessions-from: the N most recent stored sessions",
+            help="Historical trading days back for Alpha Vantage Options (default: 1 snapshot, or specify N days). With --sessions-from: the N most recent stored sessions",
         ),
-    ] = None,
-    weeks_back: Annotated[
-        int | None, typer.Option("--weeks-back", help="Historical weeks back for FINRA OTC (default: 52 for full year)")
     ] = None,
     moneyness_band: Annotated[
         float | None,
@@ -247,8 +242,6 @@ def run_command(
                 kwargs["all_years"] = all_years
             if days_back is not None:
                 kwargs["days_back"] = days_back
-            if weeks_back is not None:
-                kwargs["weeks_back"] = weeks_back
             if moneyness_band is not None:
                 kwargs["moneyness_band_pct"] = moneyness_band
             if prune_inactive:
@@ -676,10 +669,13 @@ def stats(
                 table.add_row("SEC Form 4 Insider Trades", str(data["insider_trades"]))
             if data.get("institutional_holdings"):
                 table.add_row("SEC 13F Institutional Holdings", str(data["institutional_holdings"]))
+            # Both collectors were retired; these two rows are a record of what is
+            # already stored locally so an operator can see it and purge it. They
+            # are labelled retired so nobody reads them as a running feed.
             if data.get("finra_otc"):
-                table.add_row("FINRA OTC / Dark Pool Records", str(data["finra_otc"]))
+                table.add_row("FINRA OTC / Dark Pool Records (retired, no longer collected)", str(data["finra_otc"]))
             if data.get("cboe_options"):
-                table.add_row("CBOE Daily Options Records", str(data["cboe_options"]))
+                table.add_row("CBOE Daily Options Records (retired, no longer collected)", str(data["cboe_options"]))
             if data.get("macro_indicators"):
                 table.add_row("FRED Macro Indicators", str(data["macro_indicators"]))
             if data.get("options_chains"):
