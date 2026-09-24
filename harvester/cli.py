@@ -1,6 +1,7 @@
 """Rich Command Line Interface for GreeksView Congressional Trading Crawler."""
 
 import asyncio
+from pathlib import Path
 from typing import Annotated, Any
 
 import typer
@@ -10,8 +11,14 @@ from rich.table import Table
 
 from harvester import __version__
 from harvester.config import Settings, get_settings
-from harvester.core.db import MOCK_SQLITE_PATH, DatabaseManager, mark_sqlite_file_mock
+from harvester.core.db import (
+    MOCK_SQLITE_PATH,
+    DatabaseManager,
+    mark_sqlite_file_mock,
+    sqlite_file_is_mock,
+)
 from harvester.core.http_client import resilient_http_client
+from harvester.core.progress import DEFAULT_CHECKPOINT_PATH
 from harvester.orchestration.daemon import CrawlerDaemon
 from harvester.orchestration.scheduler import (
     DEFAULT_FRIDAY_SWEEP_CRON,
@@ -34,8 +41,15 @@ def _resolve_settings(mock: bool, db_url: str | None) -> Settings:
     """Settings for a command; a --mock run never writes into the file sync-pg pushes.
 
     Without --db-url a mock run writes to greeksview_harvester.mock.db, whatever
-    DATABASE_URL says. An explicit sqlite:/// --db-url is honoured but stamped as
-    mock-written, so sync-pg refuses it. A PostgreSQL --db-url is refused.
+    DATABASE_URL says. A PostgreSQL --db-url is refused. An explicit sqlite:///
+    --db-url is honoured only when the file is the mock run's own to write: a
+    new file, or one a mock run has already stamped.
+
+    AN EXISTING REAL STORE IS REFUSED, NOT STAMPED. Honouring it and stamping
+    it mock was the older rule, and the stamp is what sync-pg reads to refuse a
+    file — so one slip would have branded a 60-million-row harvest and blocked
+    every sync until someone cleared the pragma by hand. Refusing costs a
+    retyped path; stamping costs the store.
     """
     settings = get_settings()
     if db_url is not None:
@@ -49,8 +63,44 @@ def _resolve_settings(mock: bool, db_url: str | None) -> Settings:
             "[bold red]Error:[/bold red] --mock never writes to PostgreSQL. Omit --db-url or pass a sqlite:/// file."
         )
         raise typer.Exit(code=1)
-    mark_sqlite_file_mock(DatabaseManager(settings=settings).sqlite_path)
+    sqlite_path = DatabaseManager(settings=settings).sqlite_path
+    refusal = _mock_write_refusal(sqlite_path)
+    if refusal:
+        console.print(f"[bold red]Error:[/bold red] {refusal}")
+        raise typer.Exit(code=1)
+    mark_sqlite_file_mock(sqlite_path)
     return settings
+
+
+def _mock_write_refusal(path: str) -> str | None:
+    """Why a --mock run must not write to this SQLite file, or None if it may.
+
+    A file that does not exist yet, or is empty, or one a mock run has already
+    stamped, is the mock run's own. Anything else is somebody's harvest.
+
+    WHEN IT CANNOT BE TOLD, IT IS REFUSED. An unreadable or unstamped existing
+    file is treated as real: a wrong refusal costs a retyped path, and a wrong
+    allow writes fabricated rows into a store and stamps it so sync-pg will not
+    take it.
+    """
+    if not path or path == ":memory:":
+        return None
+    f = Path(path)
+    if not f.exists() or f.stat().st_size == 0:
+        return None
+    try:
+        if sqlite_file_is_mock(path):
+            return None
+    except Exception:
+        return (
+            f"{path} already exists and could not be read to tell whether a --mock run wrote it. "
+            "Omit --db-url to use the mock database, or pass a path that does not exist yet."
+        )
+    return (
+        f"{path} is an existing database that no --mock run has written to, so it holds harvested "
+        "rows. --mock would add fabricated ones and stamp the file, which stops sync-pg taking any "
+        "of it. Omit --db-url to use the mock database, or pass a path that does not exist yet."
+    )
 
 
 def _print_harvest_report(report: dict[str, Any]) -> None:
@@ -232,41 +282,45 @@ def run_command(
     )
 
     async def _run() -> None:
-        with console.status(f"[bold green]Running {worker.name} harvesting pass..."):
-            kwargs: dict[str, Any] = {"use_mock": mock}
-            if limit is not None:
-                kwargs["limit"] = limit
-            if year is not None:
-                kwargs["year"] = year
-            else:
-                kwargs["all_years"] = all_years
-            if days_back is not None:
-                kwargs["days_back"] = days_back
-            if moneyness_band is not None:
-                kwargs["moneyness_band_pct"] = moneyness_band
-            if prune_inactive:
-                kwargs["prune_inactive"] = True
-            if not skip_existing:
-                kwargs["skip_existing"] = False
-            else:
-                kwargs["skip_existing"] = True
-            if dataset is not None:
-                kwargs["dataset"] = dataset
-            if symbols is not None:
-                kwargs["symbols"] = symbols
-            if parsed_trade_dates is not None:
-                kwargs["trade_dates"] = parsed_trade_dates
-            if sessions_from is not None:
-                kwargs["sessions_from"] = sessions_from
-            if outputsize is not None:
-                kwargs["outputsize"] = outputsize
-            if interval is not None:
-                kwargs["interval"] = interval
-            if months is not None:
-                kwargs["months"] = [m.strip() for m in months.split(",") if m.strip()]
-            if not extended_hours:
-                kwargs["extended_hours"] = False
+        kwargs: dict[str, Any] = {"use_mock": mock}
+        if limit is not None:
+            kwargs["limit"] = limit
+        if year is not None:
+            kwargs["year"] = year
+        else:
+            kwargs["all_years"] = all_years
+        if days_back is not None:
+            kwargs["days_back"] = days_back
+        if moneyness_band is not None:
+            kwargs["moneyness_band_pct"] = moneyness_band
+        if prune_inactive:
+            kwargs["prune_inactive"] = True
+        if not skip_existing:
+            kwargs["skip_existing"] = False
+        else:
+            kwargs["skip_existing"] = True
+        if dataset is not None:
+            kwargs["dataset"] = dataset
+        if symbols is not None:
+            kwargs["symbols"] = symbols
+        if parsed_trade_dates is not None:
+            kwargs["trade_dates"] = parsed_trade_dates
+        if sessions_from is not None:
+            kwargs["sessions_from"] = sessions_from
+        if outputsize is not None:
+            kwargs["outputsize"] = outputsize
+        if interval is not None:
+            kwargs["interval"] = interval
+        if months is not None:
+            kwargs["months"] = [m.strip() for m in months.split(",") if m.strip()]
+        if not extended_hours:
+            kwargs["extended_hours"] = False
+
+        if worker.name == "alphavantage":
             res = await worker.run_once(**kwargs)
+        else:
+            with console.status(f"[bold green]Running {worker.name} harvesting pass..."):
+                res = await worker.run_once(**kwargs)
 
         status_style = "bold green" if res.is_success else "bold red"
         table = Table(title=f"Worker Run Summary — {worker.name}")
@@ -736,6 +790,106 @@ def archive_options_command(
     asyncio.run(_archive())
 
 
+@app.command(name="monitor")
+def monitor_command(
+    dataset: Annotated[str | None, typer.Option("--dataset", "-d", help="Filter by dataset (options, daily)")] = None,
+    follow: Annotated[
+        bool, typer.Option("--follow", "-f", help="Continuously refresh and display live progress")
+    ] = False,
+    interval: Annotated[
+        float, typer.Option("--interval", "-i", help="Polling interval in seconds for follow mode")
+    ] = 2.0,
+    db_url: Annotated[str | None, typer.Option("--db-url", help="Database connection string")] = None,
+) -> None:
+    """Monitor live background harvester execution progress in real-time."""
+    from rich.console import Group
+    from rich.live import Live
+    from rich.panel import Panel
+
+    from harvester.core.progress import HarvestProgressTracker, ProgressState
+
+    settings = get_settings()
+    if db_url is not None:
+        settings.database_url = db_url
+
+    async def _fetch_state() -> ProgressState | None:
+        state = HarvestProgressTracker.load_checkpoint(DEFAULT_CHECKPOINT_PATH)
+        if state is not None and (dataset is None or state.dataset.lower() == dataset.lower()):
+            return state
+
+        try:
+            async with DatabaseManager(settings=settings) as db:
+                rows = await db.get_harvester_progress(dataset=dataset)
+                if rows:
+                    return ProgressState.from_dict(rows[0])
+        except Exception:
+            pass
+        return None
+
+    def _build_renderable(state: ProgressState | None) -> Any:
+        if state is None:
+            return Panel(
+                "[dim]Waiting for harvester job to start...[/dim]",
+                title="GreeksView Harvester Monitor",
+                border_style="yellow",
+            )
+
+        tracker = HarvestProgressTracker(
+            dataset=state.dataset,
+            total_tickers=state.total_tickers,
+            total_days=state.total_days,
+            console=console,
+            interactive=False,
+        )
+        tracker.tickers_done = state.tickers_done
+        tracker.current_ticker = state.current_ticker
+        tracker.current_trading_day = state.current_trading_day
+        tracker.completed_units = state.completed_units
+        tracker.total_units = state.total_units
+        tracker.records_harvested = state.records_harvested
+        tracker.records_upserted = state.records_upserted
+        tracker.errors_count = state.errors_count
+        tracker.status = state.status
+        tracker._rate_override = state.rate
+        tracker._eta_display_override = state.eta_display
+        tracker._elapsed_override = state.elapsed_seconds
+
+        sub = (
+            f"[bold cyan]Sessions:[/bold cyan] {tracker.completed_units:,} / {tracker.total_units:,} "
+            f"([bold green]{tracker.pct_complete:.1f}%[/bold green]) | "
+            f"[bold cyan]Upserted Rows:[/bold cyan] {tracker.records_upserted:,} | "
+            f"[bold cyan]Rate:[/bold cyan] [cyan]{state.rate:.1f} req/s[/cyan] | "
+            f"[bold cyan]ETA:[/bold cyan] [bold white]{state.eta_display}[/bold white] | "
+            f"[bold cyan]Status:[/bold cyan] [bold yellow]{tracker.status.upper()}[/bold yellow] | "
+            f"[bold cyan]Last Updated:[/bold cyan] {state.updated_at}"
+        )
+        return Group(tracker.build_progress_table(), sub)
+
+    async def _display_loop() -> None:
+        if not follow:
+            state = await _fetch_state()
+            if state is None:
+                console.print("[yellow]No active or recorded harvester progress found.[/yellow]")
+                console.print("[dim]Run a harvester pass using: harvester run alphavantage --dataset options ...[/dim]")
+                return
+            console.print(_build_renderable(state))
+            return
+
+        initial_state = await _fetch_state()
+        renderable = _build_renderable(initial_state)
+
+        with Live(renderable, console=console, refresh_per_second=4) as live:
+            try:
+                while True:
+                    await asyncio.sleep(interval)
+                    state = await _fetch_state()
+                    live.update(_build_renderable(state), refresh=True)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                pass
+
+    asyncio.run(_display_loop())
+
+
 @app.command(name="patterns")
 def patterns_command(
     symbol: Annotated[str, typer.Argument(help="Ticker symbol to analyze (e.g. AAPL, NVDA, SPY)")],
@@ -754,7 +908,9 @@ def patterns_command(
     settings = get_settings()
     db_path = db_url or settings.database_url
     if not json_output:
-        console.print(f"[bold cyan]Running quantitative pattern analysis for {symbol.upper()} ({interval}, lookback: {days}d)...[/bold cyan]")
+        console.print(
+            f"[bold cyan]Running quantitative pattern analysis for {symbol.upper()} ({interval}, lookback: {days}d)...[/bold cyan]"
+        )
 
     try:
         engine = PatternEngine(db_path=db_path)
@@ -764,14 +920,16 @@ def patterns_command(
             print(json.dumps({"error": str(e), "symbol": symbol}))
         else:
             console.print(f"[bold red]Error running pattern analysis:[/bold red] {e}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
     if json_output:
         print(json.dumps(report.to_dict(), indent=2))
         return
 
     # Print Master Summary Table
-    table = Table(title=f"Quantitative Pattern Master Report // {report.symbol} ({report.date_start} to {report.date_end})")
+    table = Table(
+        title=f"Quantitative Pattern Master Report // {report.symbol} ({report.date_start} to {report.date_end})"
+    )
     table.add_column("Quantitative Pattern Feature", style="bold cyan")
     table.add_column("Empirical Metric", style="bold green")
     table.add_column("Sample Size", style="white")
@@ -847,4 +1005,3 @@ def patterns_command(
 
 if __name__ == "__main__":
     app()
-

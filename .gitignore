@@ -40,6 +40,8 @@ certs/
 *.db
 *.db-shm
 *.db-wal
+.harvester_progress.json
+*.progress.json
 downloads/
 data/
 *.pdf

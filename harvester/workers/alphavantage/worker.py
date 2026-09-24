@@ -23,6 +23,7 @@ Honesty rules for stored rows:
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -37,10 +38,32 @@ from typing import Any
 from harvester.config import Settings, get_settings
 from harvester.core.base_worker import BaseWorker, WorkerResult
 from harvester.core.db import MOCK_SQLITE_PATH, DatabaseManager
+from harvester.core.progress import HarvestProgressTracker
 from harvester.workers.alphavantage.api_client import AlphaVantageClient, AlphaVantageError
 from harvester.workers.alphavantage.pacer import AlphaVantagePacer
 
 logger = logging.getLogger("harvester.workers.alphavantage")
+
+
+def is_trading_weekday(iso_day: str) -> bool:
+    """True when an ISO date falls Monday-Friday.
+
+    A DAILY BAR ON A SATURDAY IS NOT DATA. Three such rows reached this store
+    on 16 Sep 2026 — SPY on Labor Day, a Saturday and a Sunday, at 456-464
+    while the real index was 757-774, with volumes round to the hundred
+    thousand. They came from the --mock generator below (open 450+d,
+    high 455+d, volume 50,000,000+d*100,000) written into the real database,
+    and nothing on the write path could tell them from a session.
+
+    Holidays are NOT caught here and cannot be: knowing them needs a calendar
+    this worker does not carry, and the reference series that would supply one
+    is the very thing being written. A weekend is decidable from the date
+    alone, so that is what this refuses.
+    """
+    try:
+        return datetime.fromisoformat(iso_day).weekday() < 5
+    except ValueError:
+        return False
 
 # HOW MANY CHAIN FETCHES MAY BE IN FLIGHT AT ONCE. Not a rate limit — the pacer
 # is the only thing that decides requests per second and per minute. This only
@@ -273,6 +296,7 @@ class AlphaVantageWorker(BaseWorker):
         outputsize: str = "compact",
         use_mock: bool = False,
         report: HarvestReport | None = None,
+        progress_tracker: HarvestProgressTracker | None = None,
     ) -> tuple[int, int]:
         """Download daily adjusted bars and persist to stock_bars_daily.
 
@@ -315,14 +339,31 @@ class AlphaVantageWorker(BaseWorker):
                 except AlphaVantageError as exc:
                     logger.warning("Daily bars fetch error for %s: %s", sym, exc)
                     rep.fetch_errors.append(f"TIME_SERIES_DAILY_ADJUSTED {sym}: status {exc.status} ({exc.label})")
+                    if progress_tracker:
+                        progress_tracker.update_session(
+                            ticker=sym, trading_day="daily", records_count=0, upserted=0, is_error=True
+                        )
+                        progress_tracker.mark_ticker_done(sym)
                     continue
                 ts = data.get("Time Series (Daily)")
                 if not isinstance(ts, dict):
                     rep.fetch_errors.append(f"TIME_SERIES_DAILY_ADJUSTED {sym}: response had no 'Time Series (Daily)'")
+                    if progress_tracker:
+                        progress_tracker.update_session(
+                            ticker=sym, trading_day="daily", records_count=0, upserted=0, is_error=True
+                        )
+                        progress_tracker.mark_ticker_done(sym)
                     continue
                 for t_date, bar in ts.items():
                     if not is_iso_date(t_date):
                         rep.skipped["daily_malformed_date"] += 1
+                        continue
+                    if not is_trading_weekday(t_date):
+                        rep.skipped["daily_non_session"] += 1
+                        logger.warning(
+                            "Refusing a %s daily bar for %s: the market does not trade that day",
+                            t_date, sym,
+                        )
                         continue
                     parsed = self._parse_bar(bar, _DAILY_FIELDS, rep, "daily")
                     if parsed is None:
@@ -331,8 +372,17 @@ class AlphaVantageWorker(BaseWorker):
                     records.append({"symbol": sym, "trade_date": t_date, **parsed})
 
             harvested += len(records)
+            u = 0
             if records:
-                upserted += await db.upsert_stock_bars_daily(records)
+                u = await db.upsert_stock_bars_daily(records)
+                upserted += u
+
+            if progress_tracker:
+                latest_dt = records[0]["trade_date"] if records else "daily"
+                progress_tracker.update_session(
+                    ticker=sym, trading_day=latest_dt, records_count=len(records), upserted=u
+                )
+                progress_tracker.mark_ticker_done(sym)
 
         return harvested, upserted
 
@@ -650,6 +700,7 @@ class AlphaVantageWorker(BaseWorker):
         skip_existing: bool = True,
         use_mock: bool = False,
         report: HarvestReport | None = None,
+        progress_tracker: HarvestProgressTracker | None = None,
     ) -> tuple[int, int]:
         """Download end-of-day options chains and persist to options_chains_eod.
 
@@ -678,9 +729,9 @@ class AlphaVantageWorker(BaseWorker):
         async for sym, needed_dates, settled in self._symbols_in_order(
             db, symbols, target_dates, skip_existing, use_mock, rep
         ):
-            records: list[dict[str, Any]] = []
             if use_mock:
                 for dt in needed_dates:
+                    dt_records: list[dict[str, Any]] = []
                     mock_spot = 455.0
                     for mock_strike in (300.0, 450.0, 455.0, 460.0, 600.0):
                         if band is not None and abs(mock_strike - mock_spot) / mock_spot > (band / 100.0):
@@ -691,7 +742,7 @@ class AlphaVantageWorker(BaseWorker):
                             if prune_inactive and vol == 0 and oi == 0:
                                 continue
                             cid = f"{sym}_{dt}_{mock_strike:.0f}_{otype.upper()}"
-                            records.append(
+                            dt_records.append(
                                 {
                                     "contract_id": cid,
                                     "symbol": sym,
@@ -713,14 +764,52 @@ class AlphaVantageWorker(BaseWorker):
                                     "rho": 0.05,
                                 }
                             )
+                    harvested += len(dt_records)
+                    u = 0
+                    if dt_records:
+                        u = await db.upsert_options_chains_eod(dt_records)
+                        upserted += u
+                    if progress_tracker:
+                        progress_tracker.update_session(
+                            ticker=sym, trading_day=dt, records_count=len(dt_records), upserted=u
+                        )
+                if progress_tracker:
+                    progress_tracker.mark_ticker_done(sym)
             else:
                 spots: dict[str, float | None] = {}
+                batch_records: list[dict[str, Any]] = []
+                batch_sessions: list[tuple[str, int]] = []
+                flush_threshold = max(1, min(5, self.options_concurrency))
+
+                async def _flush_batch(
+                    records_to_flush: list[dict[str, Any]],
+                    sessions_to_flush: list[tuple[str, int]],
+                    symbol: str,
+                ) -> int:
+                    if not records_to_flush and not sessions_to_flush:
+                        return 0
+                    u = 0
+                    if records_to_flush:
+                        u = await db.upsert_options_chains_eod(records_to_flush)
+                    for dt_val, r_cnt in sessions_to_flush:
+                        if progress_tracker:
+                            progress_tracker.update_session(
+                                ticker=symbol, trading_day=dt_val, records_count=r_cnt, upserted=u
+                            )
+                    records_to_flush.clear()
+                    sessions_to_flush.clear()
+                    return u
+
                 async for dt, data in self._chains_for(sym, needed_dates, rep, settled):
                     chain = data.get("data")
                     if not isinstance(chain, list) or not chain:
                         rep.empty_responses.append(f"{sym} {dt}")
+                        batch_sessions.append((dt, 0))
+                        if len(batch_sessions) >= flush_threshold:
+                            upserted += await _flush_batch(batch_records, batch_sessions, sym)
                         continue
 
+                    dt_records = []
                     got_dates: set[str] = set()
                     for row in chain:
                         rec = self._options_record(sym, row, rep)
@@ -750,15 +839,23 @@ class AlphaVantageWorker(BaseWorker):
                                 rep.filtered["options_outside_band"] += 1
                                 continue
 
-                        records.append(rec)
+                        dt_records.append(rec)
 
                     if got_dates and got_dates != {dt}:
                         rep.date_substitutions.append({"symbol": sym, "asked": dt, "got": sorted(got_dates)})
                         logger.warning("HISTORICAL_OPTIONS %s: asked %s, got %s", sym, dt, ", ".join(sorted(got_dates)))
 
-            harvested += len(records)
-            if records:
-                upserted += await db.upsert_options_chains_eod(records)
+                    harvested += len(dt_records)
+                    batch_records.extend(dt_records)
+                    batch_sessions.append((dt, len(dt_records)))
+
+                    if len(batch_sessions) >= flush_threshold:
+                        upserted += await _flush_batch(batch_records, batch_sessions, sym)
+
+                upserted += await _flush_batch(batch_records, batch_sessions, sym)
+
+                if progress_tracker:
+                    progress_tracker.mark_ticker_done(sym)
 
         return harvested, upserted
 
@@ -1038,15 +1135,30 @@ class AlphaVantageWorker(BaseWorker):
                     await db.mark_mock_written()
 
                 if selected_dataset in ("daily", "all"):
+                    daily_tracker = kwargs.get("progress_tracker")
+                    if daily_tracker is None:
+                        daily_tracker = HarvestProgressTracker(
+                            dataset="daily",
+                            symbols=target_symbols,
+                            total_days=1,
+                        )
+                        await daily_tracker.scan_initial_state(
+                            db, target_symbols, skip_existing=bool(kwargs.get("skip_existing", True))
+                        )
                     h, u = await self.download_daily_bars(
                         db,
                         target_symbols,
                         outputsize=kwargs.get("outputsize") or "compact",
                         use_mock=use_mock,
                         report=report,
+                        progress_tracker=daily_tracker,
                     )
                     harvested += h
                     upserted += u
+                    if daily_tracker:
+                        daily_tracker.finish("completed")
+                        with contextlib.suppress(Exception):
+                            await db.upsert_harvester_progress(daily_tracker.snapshot().to_dict())
 
                 if selected_dataset in ("intraday", "all"):
                     h, u = await self.download_intraday_bars(
@@ -1079,6 +1191,17 @@ class AlphaVantageWorker(BaseWorker):
                             )
                         days_back = None
                     skip_existing = bool(kwargs.get("skip_existing", True))
+                    resolved_target_dates = self.resolve_target_dates(trade_dates, days_back)
+                    options_tracker = kwargs.get("progress_tracker")
+                    if options_tracker is None:
+                        options_tracker = HarvestProgressTracker(
+                            dataset="options",
+                            symbols=target_symbols,
+                            total_days=len(resolved_target_dates),
+                        )
+                        await options_tracker.scan_initial_state(
+                            db, target_symbols, target_dates=resolved_target_dates, skip_existing=skip_existing
+                        )
                     h, u = await self.download_historical_options(
                         db,
                         target_symbols,
@@ -1089,9 +1212,14 @@ class AlphaVantageWorker(BaseWorker):
                         skip_existing=skip_existing,
                         use_mock=use_mock,
                         report=report,
+                        progress_tracker=options_tracker,
                     )
                     harvested += h
                     upserted += u
+                    if options_tracker:
+                        options_tracker.finish("completed")
+                        with contextlib.suppress(Exception):
+                            await db.upsert_harvester_progress(options_tracker.snapshot().to_dict())
 
                 if selected_dataset in ("fundamentals", "all"):
                     h, u = await self.download_fundamentals(db, target_symbols, use_mock=use_mock)
