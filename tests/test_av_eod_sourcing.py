@@ -18,8 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-import typer
 import respx
+import typer
 from typer.testing import CliRunner
 
 import harvester.core.db as db_module
@@ -1532,9 +1532,15 @@ _SAT, _SUN, _FRI = "2026-09-12", "2026-09-13", "2026-09-11"
 async def test_a_weekend_daily_bar_is_refused_and_counted(tmp_path: Path) -> None:
     db_file = tmp_path / "weekend.db"
     worker = AlphaVantageWorker(settings=fast_settings(db_file))
-    worker.client.fetch_json = RecordingFetch(lambda fn, p: {"Time Series (Daily)": {
-        _FRI: daily_bar("764.29"), _SAT: daily_bar("457.0"), _SUN: daily_bar("456.0"),
-    }})
+    worker.client.fetch_json = RecordingFetch(
+        lambda fn, p: {
+            "Time Series (Daily)": {
+                _FRI: daily_bar("764.29"),
+                _SAT: daily_bar("457.0"),
+                _SUN: daily_bar("456.0"),
+            }
+        }
+    )
     report = HarvestReport()
 
     async with DatabaseManager(worker.settings) as db:
@@ -1550,6 +1556,7 @@ async def test_a_weekend_daily_bar_is_refused_and_counted(tmp_path: Path) -> Non
 
 def test_is_trading_weekday_decides_from_the_date_alone() -> None:
     from harvester.workers.alphavantage.worker import is_trading_weekday
+
     assert is_trading_weekday(_FRI) is True
     assert is_trading_weekday(_SAT) is False
     assert is_trading_weekday(_SUN) is False

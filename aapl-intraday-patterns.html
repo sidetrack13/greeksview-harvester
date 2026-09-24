@@ -1,0 +1,1844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Intraday EdgeMatrix™ | AAPL 5-Minute Quantitative Pattern Terminal &amp; 0DTE Options Playbook</title>
+  <meta name="description" content="Trade high-expectancy 5-minute stock patterns with GreeksView Intraday EdgeMatrix™. Real-time gap fill probabilities, 88.6% anchor extremes, VWAP ±2σ stat-arb bands, and 0DTE options strategy mapping.">
+  <style>
+    :root {
+      --bg-primary: #080b11;
+      --bg-secondary: #0d131f;
+      --bg-card: #121a2a;
+      --bg-card-hover: #172237;
+      --border-subtle: #1c273c;
+      --border-focus: #0284c7;
+      --text-main: #e2e8f0;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent-cyan: #38bdf8;
+      --accent-blue: #2563eb;
+      --accent-green: #10b981;
+      --accent-red: #ef4444;
+      --accent-yellow: #f59e0b;
+      --accent-purple: #a855f7;
+      --accent-orange: #f97316;
+      --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, Monaco, monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.4;
+      overflow-x: hidden;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 8px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand-group { display: flex; align-items: center; gap: 12px; }
+    .logo-badge {
+      background: linear-gradient(135deg, #0369a1, #0284c7);
+      color: #fff;
+      font-family: var(--font-mono);
+      font-weight: 800;
+      font-size: 11px;
+      letter-spacing: 0.8px;
+      padding: 3px 8px;
+      border-radius: 3px;
+    }
+
+    .title-group h1 {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      color: #f8fafc;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .title-group .sub {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+
+    .controls-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .ctrl-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      padding: 3px 8px;
+    }
+
+    .ctrl-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+
+    select, input[type="date"], input[type="number"], button {
+      background: transparent;
+      border: none;
+      color: var(--text-main);
+      font-size: 12px;
+      font-family: var(--font-mono);
+      outline: none;
+      cursor: pointer;
+    }
+
+    input[type="number"] {
+      cursor: text;
+      border-bottom: 1px dashed var(--border-subtle);
+      padding: 1px 4px;
+    }
+
+    select option { background: var(--bg-secondary); color: var(--text-main); }
+
+    .pill-group {
+      display: flex;
+      gap: 2px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      padding: 2px;
+    }
+
+    .pill-btn {
+      padding: 3px 8px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      border-radius: 3px;
+      color: var(--text-muted);
+      background: transparent;
+      border: none;
+      transition: all 0.15s ease;
+    }
+
+    .pill-btn.active {
+      background: #1e293b;
+      color: var(--accent-cyan);
+      font-weight: 600;
+    }
+
+    .pill-btn:hover:not(.active) { background: #162032; color: var(--text-main); }
+
+    .btn-run {
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 4px;
+      border: 1px solid #38bdf8;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .btn-run:hover { background: #0284c7; }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--accent-green);
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      background-color: var(--accent-green);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--accent-green);
+    }
+
+    main {
+      flex: 1;
+      padding: 12px 16px 36px;
+      max-width: 1760px;
+      margin: 0 auto;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .metric-ribbon {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+      gap: 10px;
+    }
+
+    .metric-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 5px;
+      padding: 10px 14px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 3px;
+      height: 100%;
+      background: var(--border-subtle);
+    }
+
+    .metric-card.cyan::before { background: var(--accent-cyan); }
+    .metric-card.green::before { background: var(--accent-green); }
+    .metric-card.purple::before { background: var(--accent-purple); }
+    .metric-card.yellow::before { background: var(--accent-yellow); }
+    .metric-card.red::before { background: var(--accent-red); }
+    .metric-card.orange::before { background: var(--accent-orange); }
+
+    .metric-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      margin-bottom: 4px;
+    }
+
+    .metric-val {
+      font-size: 21px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      letter-spacing: -0.5px;
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+    }
+
+    .metric-val .unit { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+    .metric-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; display: flex; justify-content: space-between; }
+
+    .section-title-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 6px;
+      margin-top: 6px;
+    }
+
+    .section-title-bar h2 {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent-cyan);
+      font-family: var(--font-mono);
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-title-bar .tag { font-size: 10px; color: var(--text-dim); font-family: var(--font-mono); }
+
+    .dashboard-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+    .grid-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+    @media (max-width: 1200px) {
+      .dashboard-grid, .grid-2col, .grid-3col { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 5px;
+      display: flex;
+      flex-direction: column;
+      content-visibility: auto;
+      contain-intrinsic-size: auto 300px auto 600px;
+    }
+
+    .panel-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-secondary);
+      border-radius: 5px 5px 0 0;
+    }
+
+    .panel-title {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      color: #f1f5f9;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-tag {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      background: #1e293b;
+      color: var(--accent-cyan);
+      border: 1px solid #334155;
+    }
+
+    .panel-body { padding: 12px 14px; flex: 1; }
+
+    .chart-container { position: relative; width: 100%; height: 240px; }
+    canvas { width: 100%; height: 100%; display: block; }
+
+    .chart-legend {
+      display: flex;
+      gap: 16px;
+      margin-top: 8px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      flex-wrap: wrap;
+    }
+
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-box { width: 10px; height: 10px; border-radius: 2px; }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .data-table th {
+      background: #0f172a;
+      color: var(--text-dim);
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border-subtle);
+      font-weight: 600;
+      letter-spacing: 0.4px;
+    }
+
+    .data-table td {
+      padding: 7px 10px;
+      border-bottom: 1px solid #172033;
+      color: var(--text-main);
+    }
+
+    .data-table tr:hover td { background: var(--bg-card-hover); }
+
+    .text-green { color: var(--accent-green) !important; font-weight: 600; }
+    .text-red { color: var(--accent-red) !important; font-weight: 600; }
+    .text-cyan { color: var(--accent-cyan) !important; }
+    .text-yellow { color: var(--accent-yellow) !important; }
+    .text-purple { color: var(--accent-purple) !important; }
+    .text-orange { color: var(--accent-orange) !important; }
+
+    .bar-cell { display: flex; align-items: center; gap: 8px; }
+    .progress-track { flex: 1; height: 6px; background: #1e293b; border-radius: 2px; overflow: hidden; min-width: 50px; }
+    .progress-fill { height: 100%; border-radius: 2px; }
+
+    .guidance-block {
+      background: #090e18;
+      border: 1px solid #1a2538;
+      border-radius: 4px;
+      padding: 10px 12px;
+      margin-top: 10px;
+    }
+
+    .guidance-header {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      color: var(--accent-cyan);
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .guidance-body { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+    .guidance-body b { color: #f1f5f9; }
+
+    .decision-rule {
+      background: #0d1627;
+      border-left: 3px solid var(--accent-cyan);
+      padding: 6px 10px;
+      margin-top: 6px;
+      border-radius: 0 4px 4px 0;
+      font-size: 11px;
+      color: #cbd5e1;
+    }
+
+    .decision-rule b { color: var(--accent-cyan); }
+
+    /* Interactive Live Playbook Calculator */
+    .calc-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    @media (max-width: 900px) {
+      .calc-grid { grid-template-columns: 1fr; }
+    }
+
+    .calc-input-box {
+      background: #0b111e;
+      border: 1px solid #1e293b;
+      border-radius: 4px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .calc-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .calc-row label {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+
+    .calc-row input {
+      width: 90px;
+      text-align: right;
+      font-size: 12px;
+      color: var(--accent-cyan);
+      background: #121a2a;
+      border: 1px solid #334155;
+      border-radius: 3px;
+      padding: 3px 6px;
+    }
+
+    .calc-output-box {
+      background: #090e18;
+      border: 1px solid #1c273c;
+      border-radius: 4px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .signal-card {
+      background: #111a2c;
+      border: 1px solid #22324e;
+      border-radius: 4px;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .signal-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-family: var(--font-mono);
+      color: var(--text-dim);
+    }
+
+    .signal-val {
+      font-size: 12px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+    }
+
+    /* Trade Log Terminal */
+    .trade-log-container {
+      max-height: 280px;
+      overflow-y: auto;
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-primary); }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+    .pill-badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+    }
+    .pill-badge.win { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid #059669; }
+    .pill-badge.loss { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid #dc2626; }
+
+    #tickerModal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-focus);
+      border-radius: 6px;
+      padding: 20px;
+      max-width: 480px;
+      width: 90%;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    }
+    .modal-box h3 { font-size: 14px; color: #f8fafc; margin-bottom: 8px; }
+    .modal-box p { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.5; }
+    .code-cmd {
+      background: #0f172a;
+      border: 1px solid #334155;
+      padding: 8px 10px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--accent-cyan);
+      margin-bottom: 14px;
+      overflow-x: auto;
+    }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .modal-btn { padding: 6px 14px; font-size: 11px; font-family: var(--font-mono); border-radius: 4px; cursor: pointer; }
+    .modal-btn.cancel { background: transparent; color: var(--text-muted); border: 1px solid var(--border-subtle); }
+    .modal-btn.primary { background: var(--accent-blue); color: #fff; border: none; }
+  </style>
+  <script src="aapl_dataset.js"></script>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="brand-group">
+      <span class="logo-badge">GREEKSVIEW // EDGEMATRIX™</span>
+      <div class="title-group">
+        <h1>Intraday EdgeMatrix™ // AAPL 5-Min Terminal</h1>
+        <span class="sub">REAL-TIME QUANTITATIVE PATTERN SCANNER &amp; 0DTE OPTIONS PLAYBOOK</span>
+      </div>
+    </div>
+
+    <div class="controls-toolbar">
+      <div class="ctrl-item">
+        <span class="ctrl-label">Symbol:</span>
+        <select id="tickerSelect" onchange="handleTickerChange(this.value)">
+          <option value="AAPL" selected>AAPL (Apple Inc.) [46,968 Bars]</option>
+          <option value="NVDA">NVDA (NVIDIA Corp) [Requires Harvest]</option>
+          <option value="SPY">SPY (S&amp;P 500 ETF) [Requires Harvest]</option>
+          <option value="QQQ">QQQ (Nasdaq 100 ETF) [Requires Harvest]</option>
+          <option value="TSLA">TSLA (Tesla Inc) [Requires Harvest]</option>
+          <option value="MSFT">MSFT (Microsoft Corp) [Requires Harvest]</option>
+        </select>
+      </div>
+
+      <div class="pill-group">
+        <button class="pill-btn active" onclick="setDateRangePreset('12M', this)">12M</button>
+        <button class="pill-btn" onclick="setDateRangePreset('6M', this)">6M</button>
+        <button class="pill-btn" onclick="setDateRangePreset('3M', this)">3M</button>
+        <button class="pill-btn" onclick="setDateRangePreset('1M', this)">1M</button>
+      </div>
+
+      <div class="ctrl-item">
+        <span class="ctrl-label">From:</span>
+        <input type="date" id="dateFrom" value="2025-10-01" onchange="applyCustomDate()">
+      </div>
+      <div class="ctrl-item">
+        <span class="ctrl-label">To:</span>
+        <input type="date" id="dateTo" value="2026-09-22" onchange="applyCustomDate()">
+      </div>
+
+      <div class="ctrl-item">
+        <span class="ctrl-label">Bar:</span>
+        <span style="font-family: var(--font-mono); font-size: 11px; color: var(--accent-cyan);">5 MIN (RTH)</span>
+      </div>
+
+      <button class="btn-run" onclick="recomputeAll()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+        Recompute
+      </button>
+
+      <div class="status-badge">
+        <span class="status-dot"></span>
+        <span id="sessionCountBadge">245 SESSIONS</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- Master Metric Ribbon -->
+    <section class="metric-ribbon">
+      <div class="metric-card cyan">
+        <div class="metric-title">45m Anchor Lock (09:30–10:15)</div>
+        <div class="metric-val" id="metricAnchor">88.6<span class="unit">%</span></div>
+        <div class="metric-sub">
+          <span>HOD: <b id="subHod">42.4%</b></span>
+          <span>LOD: <b id="subLod">48.2%</b></span>
+        </div>
+      </div>
+
+      <div class="metric-card green">
+        <div class="metric-title">Overnight Gap Fill (EOD)</div>
+        <div class="metric-val" id="metricGapEod">74.9<span class="unit">%</span></div>
+        <div class="metric-sub">
+          <span>By 10:30: <b id="subGap1030">61.2%</b></span>
+          <span>Active: <b id="subGapCount">219</b></span>
+        </div>
+      </div>
+
+      <div class="metric-card purple">
+        <div class="metric-title">VWAP ±2σ Mean Reversion</div>
+        <div class="metric-val">88.1<span class="unit">%</span></div>
+        <div class="metric-sub">
+          <span>Touched: <b>89.4% (219/245)</b></span>
+          <span>Reverted: <b>193/219</b></span>
+        </div>
+      </div>
+
+      <div class="metric-card orange">
+        <div class="metric-title">60m Initial Balance Trend</div>
+        <div class="metric-val">74.3<span class="unit">%</span></div>
+        <div class="metric-sub">
+          <span>Single-Side: <b>182/245</b></span>
+          <span>Chop: <b>10.2%</b></span>
+        </div>
+      </div>
+
+      <div class="metric-card cyan">
+        <div class="metric-title">Fair Value Gap Retest Rate</div>
+        <div class="metric-val">87.7<span class="unit">%</span></div>
+        <div class="metric-sub">
+          <span>S/R Held: <b class="text-green">84.0%</b></span>
+          <span>N: <b>2,570 Gaps</b></span>
+        </div>
+      </div>
+
+      <div class="metric-card yellow">
+        <div class="metric-title">Tue &amp; Wed Bull Engine</div>
+        <div class="metric-val" id="metricDowWin">60.8<span class="unit">%</span></div>
+        <div class="metric-sub">
+          <span>Tue: <b class="text-green" id="subTueRet">+0.317%</b></span>
+          <span>Wed: <b class="text-green" id="subWedRet">+0.234%</b></span>
+        </div>
+      </div>
+
+      <div class="metric-card red">
+        <div class="metric-title">ORB-15 Breakout Trap Rate</div>
+        <div class="metric-val" id="metricOrbTrap">67.5<span class="unit">%</span></div>
+        <div class="metric-sub">
+          <span>1.0x Reach: <b id="subOrbReach">32.5%</b></span>
+          <span>Rev: <b id="subOrbRev">28.7%</b></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- LIVE MORNING PLAYBOOK & REAL-TIME TRADE CALCULATOR -->
+    <div class="section-title-bar">
+      <h2>00 // TODAY'S LIVE MORNING PLAYBOOK &amp; SCENARIO CALCULATOR</h2>
+      <span class="tag">REAL-TIME OPERATIONAL DECISION ENGINE</span>
+    </div>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>Intraday Scenario Calculator &amp; Decision Checklist</span>
+          <span class="panel-tag">EXECUTION BRIDGE</span>
+        </div>
+        <div style="font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);">
+          Enter current session markers to generate probability targets:
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="calc-grid">
+          <!-- Inputs -->
+          <div class="calc-input-box">
+            <div style="font-size: 11px; font-weight: 700; color: var(--accent-cyan); font-family: var(--font-mono); margin-bottom: 4px;">SESSION INPUT MARKERS</div>
+            <div class="calc-row">
+              <label>Today's Open Price ($):</label>
+              <input type="number" id="calcOpen" value="228.40" step="0.10" oninput="runLiveCalculator()">
+            </div>
+            <div class="calc-row">
+              <label>Previous Day Close ($):</label>
+              <input type="number" id="calcPrevClose" value="227.15" step="0.10" oninput="runLiveCalculator()">
+            </div>
+            <div class="calc-row">
+              <label>10:15 AM High ($):</label>
+              <input type="number" id="calcHod45" value="229.20" step="0.10" oninput="runLiveCalculator()">
+            </div>
+            <div class="calc-row">
+              <label>10:15 AM Low ($):</label>
+              <input type="number" id="calcLod45" value="227.90" step="0.10" oninput="runLiveCalculator()">
+            </div>
+            <div class="calc-row">
+              <label>Current Price ($):</label>
+              <input type="number" id="calcCurrentPrice" value="228.85" step="0.10" oninput="runLiveCalculator()">
+            </div>
+            <div class="calc-row">
+              <label>Current Session VWAP ($):</label>
+              <input type="number" id="calcCurrentVwap" value="228.15" step="0.10" oninput="runLiveCalculator()">
+            </div>
+            <div class="calc-row">
+              <label>Session StdDev σ ($):</label>
+              <input type="number" id="calcCurrentSigma" value="0.45" step="0.05" oninput="runLiveCalculator()">
+            </div>
+          </div>
+
+          <!-- Live Outputs -->
+          <div class="calc-output-box">
+            <div style="font-size: 11px; font-weight: 700; color: var(--accent-green); font-family: var(--font-mono); margin-bottom: 4px;">AUTOMATED TRADE TARGETS &amp; PROBABILITIES</div>
+            
+            <div class="signal-card">
+              <div>
+                <div class="signal-title">Gap Analysis &amp; Target</div>
+                <div style="font-size: 11px; color: var(--text-muted);" id="calcGapDesc">Gap Up +0.55%</div>
+              </div>
+              <div class="signal-val text-green" id="calcGapTarget">Target: $227.15 (66.4% Fill)</div>
+            </div>
+
+            <div class="signal-card">
+              <div>
+                <div class="signal-title">Structural Anchor Stop (88.6% Confidence)</div>
+                <div style="font-size: 11px; color: var(--text-muted);">10c Beyond 10:15 Extreme</div>
+              </div>
+              <div class="signal-val text-cyan" id="calcAnchorStop">$227.80 (LOD Stop)</div>
+            </div>
+
+            <div class="signal-card">
+              <div>
+                <div class="signal-title">VWAP Distance &amp; Reversion Signal</div>
+                <div style="font-size: 11px; color: var(--text-muted);" id="calcVwapZscore">+1.56σ from Mean</div>
+              </div>
+              <div class="signal-val text-purple" id="calcVwapProb">Reversion Prob: 88.1% to $228.15</div>
+            </div>
+
+            <div class="signal-card">
+              <div>
+                <div class="signal-title">60-Min Initial Balance (IB) Targets</div>
+                <div style="font-size: 11px; color: var(--text-muted);">Range: $1.30</div>
+              </div>
+              <div class="signal-val text-orange" id="calcIbTarget">Bull: $231.15 | Bear: $225.95</div>
+            </div>
+
+            <div class="decision-rule" style="margin-top: 2px;" id="calcVerdict">
+              <b>Desk Synthesis:</b> GAP UP &bull; Fade target is Previous Close $227.15 before 10:30 AM ET. Structural long stop at $227.80.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 1: CORE TIME-OF-DAY & SEASONALITY -->
+    <div class="section-title-bar">
+      <h2>01 // INTRADAY TIME PROFILE &amp; SEASONALITY DYNAMICS</h2>
+      <span class="tag">MACRO AUCTION CADENCE</span>
+    </div>
+
+    <section class="dashboard-grid">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>Time-of-Day (TOD) Expectancy &amp; Volatility Profile</span>
+            <span class="panel-tag">5-MIN BARS (09:30–16:00 ET)</span>
+          </div>
+          <div class="pill-group">
+            <button class="pill-btn active" id="btnTodRet" onclick="switchTodMode('returns', this)">Mean Return %</button>
+            <button class="pill-btn" id="btnTodRng" onclick="switchTodMode('ranges', this)">Range %</button>
+            <button class="pill-btn" id="btnTodVol" onclick="switchTodMode('volumes', this)">Volume</button>
+            <button class="pill-btn" id="btnTodWr" onclick="switchTodMode('win_rate', this)">Green %</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="chart-container">
+            <canvas id="todCanvas"></canvas>
+          </div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-box" style="background: var(--accent-cyan);"></div><span id="chartLegendLabel">Average 5-Min Return (%)</span></div>
+            <div class="legend-item"><div class="legend-box" style="background: rgba(239, 68, 68, 0.4);"></div><span>Opening Chaos (09:30–09:40)</span></div>
+            <div class="legend-item"><div class="legend-box" style="background: rgba(16, 185, 129, 0.3);"></div><span>VWAP Reversion (10:00–11:30)</span></div>
+            <div class="legend-item"><div class="legend-box" style="background: rgba(168, 85, 247, 0.3);"></div><span>Closing Imbalance (15:50–16:00)</span></div>
+          </div>
+          <div class="guidance-block">
+            <div class="guidance-header">How to Read the Curve &amp; Trader Decision</div>
+            <div class="guidance-body">
+              The first 10 minutes (09:30–09:40) have the highest volatility (0.88% range) but <b>zero directional persistence</b> (49.4% win rate). True institutional accumulation begins at <b>09:45 ET</b> (+0.033% avg return, 59.2% green bars). Volatility drops ~80% during the 11:30–13:30 lunch lull before volume ramps 20x into the 16:00 closing cross.
+            </div>
+            <div class="decision-rule">
+              <b>Decision:</b> Never market-order at 09:30. Wait until 09:45 AM ET for true institutional direction. Flatten directional scalps before the 15:50 MOC cross.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>Day-of-Week (DOW) Flow Dynamics</span>
+            <span class="panel-tag">OPEN TO CLOSE</span>
+          </div>
+        </div>
+        <div class="panel-body" style="padding: 0;">
+          <table class="data-table" id="dowTable">
+            <thead>
+              <tr><th>Day</th><th>Sessions</th><th>Win Rate</th><th>Mean Ret</th><th>Median</th><th>Range</th></tr>
+            </thead>
+            <tbody id="dowTableBody"></tbody>
+          </table>
+          <div style="padding: 12px 14px;">
+            <div class="guidance-block" style="margin-top: 0;">
+              <div class="guidance-header">How to Read the DOW Matrix &amp; Trader Decision</div>
+              <div class="guidance-body">
+                <b>Tuesday &amp; Wednesday</b> are the institutional accumulation days with a <b>60.8% win rate</b> and +0.317% / +0.234% average returns. <b>Thursday</b> is profit-taking/distribution (-0.123% avg). <b>Friday</b> has the widest price range (3.02%) but closes flat (-0.009%) due to OPEX gamma strike pinning.
+              </div>
+              <div class="decision-rule">
+                <b>Decision:</b> Lean aggressive long on Tuesday/Wednesday. Tighten stops or take profits ahead of Thursday open. Sell options premium or fade extremes on Friday.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2: 7 ADVANCED INSTITUTIONAL ALPHA PATTERNS -->
+    <div class="section-title-bar">
+      <h2>02 // 7 ADVANCED INSTITUTIONAL QUANTITATIVE PATTERNS</h2>
+      <span class="tag">ALGORITHMIC EXECUTION SUITE</span>
+    </div>
+
+    <!-- Row 1: FVG & VWAP 2-Sigma -->
+    <section class="grid-2col">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>1. Fair Value Gap (FVG) / Liquidity Void Rebalancing</span>
+            <span class="panel-tag">SMART MONEY ENGINE</span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table class="data-table">
+            <tbody>
+              <tr><td>Total 5-Min FVGs Identified (&ge; $0.08)</td><td style="text-align: right; font-weight: 700;">2,570</td></tr>
+              <tr>
+                <td>Retest Rate (Rebalanced Price Void)</td>
+                <td style="text-align: right;">
+                  <div class="bar-cell">
+                    <span class="text-cyan">87.7%</span>
+                    <div class="progress-track"><div class="progress-fill" style="width: 87.7%; background: var(--accent-cyan);"></div></div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td>Support / Resistance Held upon Retest</td>
+                <td style="text-align: right;">
+                  <div class="bar-cell">
+                    <span class="text-green">84.0%</span>
+                    <div class="progress-track"><div class="progress-fill" style="width: 84.0%; background: var(--accent-green);"></div></div>
+                  </div>
+                </td>
+              </tr>
+              <tr><td>Average Imbalance Gap Size</td><td style="text-align: right; font-weight: 700; color: var(--accent-cyan);">$0.30</td></tr>
+            </tbody>
+          </table>
+          <div class="guidance-block">
+            <div class="guidance-header">How to Read the Numbers</div>
+            <div class="guidance-body">
+              An FVG occurs when a 5-minute displacement candle skips price levels between Bar 1 and Bar 3. Automated market makers return to fill that void in <b>87.7% of setups</b>. When retested, the origin of the displacement holds without closing through in <b>84.0% of cases</b>.
+            </div>
+            <div class="decision-rule">
+              <b>Decision:</b> Place resting limit orders at the 50% midpoint of the FVG. Stop-loss 1 tick beyond Bar 1 origin. Target prior extreme or VWAP (1:2+ R/R).
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>2. VWAP ±2.0σ Extreme Statistical Arbitrage</span>
+            <span class="panel-tag">STAT ARB BANDS</span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table class="data-table">
+            <tbody>
+              <tr><td>Sessions Touching ±2.0σ after 10:00 AM</td><td style="text-align: right; font-weight: 700;">89.4% (219 / 245)</td></tr>
+              <tr>
+                <td>Mean-Reversion Rate back to VWAP</td>
+                <td style="text-align: right;">
+                  <div class="bar-cell">
+                    <span class="text-green">88.1%</span>
+                    <div class="progress-track"><div class="progress-fill" style="width: 88.1%; background: var(--accent-green);"></div></div>
+                  </div>
+                </td>
+              </tr>
+              <tr><td>Successful Mean Reversions</td><td style="text-align: right; font-weight: 700; color: var(--accent-green);">193 / 219 Sessions</td></tr>
+              <tr><td>Average Reversion Duration</td><td style="text-align: right; font-weight: 700; color: var(--text-dim);">35–50 Minutes</td></tr>
+            </tbody>
+          </table>
+          <div class="guidance-block">
+            <div class="guidance-header">How to Read the Numbers</div>
+            <div class="guidance-body">
+              Stretching $\pm 2.0\sigma$ away from VWAP is an extreme statistical displacement. In <b>88.1% of occurrences</b>, AAPL pulls back to touch the central VWAP line before 16:00 ET. Only 11.9% transition into runaway trend days beyond $2.5\sigma$.
+            </div>
+            <div class="decision-rule">
+              <b>Decision:</b> When price touches $+2.0\sigma$ (or $-2.0\sigma$) without major news, enter a counter-trend fade toward VWAP. Stop out if 2 consecutive 5m bars close beyond $2.5\sigma$.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Row 2: 60m IB & PDH/PDL Sweeps -->
+    <section class="grid-2col">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>3. 60-Minute Initial Balance (IB) Expansion (09:30–10:30)</span>
+            <span class="panel-tag">AUCTION MARKET THEORY</span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table class="data-table">
+            <tbody>
+              <tr>
+                <td>Clean Trend Expansion (Broke only 1 side)</td>
+                <td style="text-align: right;">
+                  <div class="bar-cell">
+                    <span class="text-green">74.3%</span>
+                    <div class="progress-track"><div class="progress-fill" style="width: 74.3%; background: var(--accent-green);"></div></div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td>Rotational Whipsaw (Broke both High &amp; Low)</td>
+                <td style="text-align: right;">
+                  <div class="bar-cell">
+                    <span class="text-red">10.2%</span>
+                    <div class="progress-track"><div class="progress-fill" style="width: 10.2%; background: var(--accent-red);"></div></div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td>Inside Day (Stayed within 60m IB all day)</td>
+                <td style="text-align: right;">
+                  <div class="bar-cell">
+                    <span class="text-yellow">15.5%</span>
+                    <div class="progress-track"><div class="progress-fill" style="width: 15.5%; background: var(--accent-yellow);"></div></div>
+                  </div>
+                </td>
+              </tr>
+              <tr><td>Average 60-Minute IB Range</td><td style="text-align: right; font-weight: 700; color: var(--accent-cyan);">1.51% (Median: 1.41%)</td></tr>
+            </tbody>
+          </table>
+          <div class="guidance-block">
+            <div class="guidance-header">How to Read the Numbers</div>
+            <div class="guidance-body">
+              The 60-minute range (09:30–10:30 ET) provides true institutional directional commitment. Once price breaks the IB high or low, it trends in that single direction <b>74.3% of the time</b>. Double-break chop occurs in only 10.2% of sessions.
+            </div>
+            <div class="decision-rule">
+              <b>Decision:</b> Wait for 10:30 AM ET. Enter on a confirmed 5m close outside the 60m IB. Place stop-loss at IB midpoint. Opposite extreme serves as structural barrier with 89.8% confidence.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>4. Previous Day High / Low (PDH / PDL) Liquidity Sweeps</span>
+            <span class="panel-tag">LIQUIDITY TRAPS</span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table class="data-table">
+            <tbody>
+              <tr><td>Days Piercing PDH (137 / 244)</td><td style="text-align: right; font-weight: 700;">56.1%</td></tr>
+              <tr>
+                <td>PDH Rejection (Closed back below - Trap)</td>
+                <td style="text-align: right;">
+                  <div class="bar-cell">
+                    <span class="text-red">50.4%</span>
+                    <div class="progress-track"><div class="progress-fill" style="width: 50.4%; background: var(--accent-red);"></div></div>
+                  </div>
+                </td>
+              </tr>
+              <tr><td>Days Piercing PDL (100 / 244)</td><td style="text-align: right; font-weight: 700;">41.0%</td></tr>
+              <tr>
+                <td>PDL Rejection (Closed back above - Bear Trap)</td>
+                <td style="text-align: right;">
+                  <div class="bar-cell">
+                    <span class="text-green">51.0%</span>
+                    <div class="progress-track"><div class="progress-fill" style="width: 51.0%; background: var(--accent-green);"></div></div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="guidance-block">
+            <div class="guidance-header">How to Read the Numbers</div>
+            <div class="guidance-body">
+              Piercing yesterday's high or low is an exact <b>50/50 coin-flip</b> between an expansion breakout and a "Turtle Soup" false breakout trap. Blindly buying the breakout or fading the sweep at the exact moment of breach has negative expectancy.
+            </div>
+            <div class="decision-rule">
+              <b>Decision:</b> Use the <b>2-Bar Rule</b>. If Bar 2 closes back inside yesterday's range, fade the move back to Previous Close. If 2 consecutive bars close outside with volume &gt; 1.5x, ride the breakout.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Row 3: Lunch, RVOL & Power Hour -->
+    <section class="grid-3col">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>5. Lunch Squeeze (11:30–13:30)</span>
+            <span class="panel-tag">ENERGY COIL</span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table class="data-table">
+            <tbody>
+              <tr><td>Average 2-Hour Range</td><td style="text-align: right; font-weight: 700;">0.86%</td></tr>
+              <tr><td>Tight Lunch (&lt; 0.50% range)</td><td style="text-align: right; font-weight: 700; color: var(--accent-yellow);">13.1% (32/245)</td></tr>
+              <tr><td>Clean PM Breakout Rate</td><td style="text-align: right; font-weight: 700; color: var(--accent-green);">46.9%</td></tr>
+            </tbody>
+          </table>
+          <div class="guidance-block">
+            <div class="guidance-header">How to Read &amp; Trader Decision</div>
+            <div class="guidance-body">Lunch is low-volume chop. Only 13.1% of days compress below 0.50% range.</div>
+            <div class="decision-rule"><b>Decision:</b> Never enter breakouts during lunch. If range &lt; 0.50%, set bracket alerts for 13:30 ET.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>6. RVOL Climax (≥ 2.5x)</span>
+            <span class="panel-tag">VOLUME SHOCK</span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table class="data-table">
+            <tbody>
+              <tr><td>Total Volume Spikes (&ge; 2.5x)</td><td style="text-align: right; font-weight: 700;">852</td></tr>
+              <tr><td>15-Min Reversal Rate</td><td style="text-align: right; font-weight: 700; color: var(--text-dim);">50.7%</td></tr>
+              <tr><td>15-Min Continuation Rate</td><td style="text-align: right; font-weight: 700; color: var(--text-dim);">49.3%</td></tr>
+            </tbody>
+          </table>
+          <div class="guidance-block">
+            <div class="guidance-header">How to Read &amp; Trader Decision</div>
+            <div class="guidance-body">Volume spikes alone are not reversals; they represent institutional absorption.</div>
+            <div class="decision-rule"><b>Decision:</b> Never fade volume spikes in isolation. Only fade an RVOL spike if it touches VWAP $\pm 2.0\sigma$ or PDH/PDL.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>7. Power Hour (15:00–16:00)</span>
+            <span class="panel-tag">MOC IMBALANCE</span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table class="data-table">
+            <tbody>
+              <tr><td>15:00–15:30 Trend Continuation</td><td style="text-align: right; font-weight: 700; color: var(--text-dim);">51.4%</td></tr>
+              <tr><td>16:00 Closing Auction Vol</td><td style="text-align: right; font-weight: 700; color: var(--accent-purple);">20.9M Shares</td></tr>
+              <tr><td>15:50 Imbalance Reversals</td><td style="text-align: right; font-weight: 700; color: var(--accent-yellow);">Frequent</td></tr>
+            </tbody>
+          </table>
+          <div class="guidance-block">
+            <div class="guidance-header">How to Read &amp; Trader Decision</div>
+            <div class="guidance-body">At 15:50 ET, NYSE/Nasdaq MOC imbalances publish, frequently reversing late afternoon trends.</div>
+            <div class="decision-rule"><b>Decision:</b> Close intraday scalps by 15:45 ET. Holding past 15:50 exposes positions to unhedged auction whip.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3: INSTITUTIONAL OPTIONS STRATEGY MAPPING MATRIX -->
+    <div class="section-title-bar">
+      <h2>03 // INSTITUTIONAL OPTIONS STRATEGY MAPPING MATRIX</h2>
+      <span class="tag">GREEKSVIEW DERIVATIVES BRIDGE</span>
+    </div>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>High-Expectancy Options Trade Structures Mapped to 5-Min Bar Patterns</span>
+          <span class="panel-tag">DELTA &amp; THETA ALIGNMENT</span>
+        </div>
+      </div>
+      <div class="panel-body" style="padding: 0;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Intraday Stock Pattern</th>
+              <th>Statistical Edge</th>
+              <th>Optimal Options Structure</th>
+              <th>Target Greeks / Delta</th>
+              <th>Execution Rationale &amp; Invalidation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>Morning Gap Fade (09:30–10:30)</b></td>
+              <td><span class="text-green">66.4% Fill by 10:30 AM</span></td>
+              <td><b>0DTE / 1DTE ITM Debit Spread</b></td>
+              <td><span class="text-cyan">Δ 0.65 Long / Δ 0.45 Short</span></td>
+              <td>High delta captures rapid intrinsic value expansion toward Previous Close before midday IV crush. Hard invalidation at 10:30 AM.</td>
+            </tr>
+            <tr>
+              <td><b>VWAP ±2.0σ Extreme Reversion</b></td>
+              <td><span class="text-green">88.1% Mean Reversion</span></td>
+              <td><b>OTM Credit Spread / Iron Condor Wing</b></td>
+              <td><span class="text-purple">Δ 0.20 Short / Δ 0.10 Long</span></td>
+              <td>Sell the $2.5\sigma$ strike as IV expands into the stretch. Monetizes theta decay and delta deflation back to the VWAP center line.</td>
+            </tr>
+            <tr>
+              <td><b>60m Initial Balance (IB) Breakout</b></td>
+              <td><span class="text-green">74.3% Single-Direction Trend</span></td>
+              <td><b>ATM Long Call/Put Debit Spread</b></td>
+              <td><span class="text-orange">Δ 0.50 Long / Δ 0.30 Short</span></td>
+              <td>Defined-risk directional momentum runner. Target 1.5x IB range extension. Stop out if price drops back to the IB midpoint.</td>
+            </tr>
+            <tr>
+              <td><b>Friday OPEX Gamma Pinning</b></td>
+              <td><span class="text-yellow">Round $5 Strike Attraction</span></td>
+              <td><b>0DTE Iron Butterfly / Short Straddle</b></td>
+              <td><span class="text-yellow">ATM Delta Neutral (Δ 0.50)</span></td>
+              <td>Centered on nearest round $5 strike (e.g. $225, $230) to monetize maximum Friday afternoon theta decay and market-maker gamma pinning.</td>
+            </tr>
+            <tr>
+              <td><b>Fair Value Gap (FVG) Rebalancing</b></td>
+              <td><span class="text-green">87.7% Retest / 84.0% S/R Hold</span></td>
+              <td><b>Short-Dated Debit Spread at 50% FVG</b></td>
+              <td><span class="text-cyan">Δ 0.60 Long</span></td>
+              <td>Enter limit buy/sell when price retests the 50% equilibrium level of the FVG. Stop-loss 1 tick beyond Bar 1 origin.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 4: GAP DYNAMICS, ORB MATRIX & STRATEGY TRADE LOG -->
+    <div class="section-title-bar">
+      <h2>04 // GAP DYNAMICS, ORB MATRIX &amp; STRATEGY TRADE LOG</h2>
+      <span class="tag">BACKTEST VERIFICATION</span>
+    </div>
+
+    <section class="grid-3col">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>Overnight Gap Fill Matrix</span>
+            <span class="panel-tag">MEAN REVERSION</span>
+          </div>
+          <div class="ctrl-item" style="padding: 1px 6px;">
+            <span class="ctrl-label">Filter:</span>
+            <select id="gapFilterSelect" onchange="filterGapStats(this.value)">
+              <option value="all">All Active (&ge; $0.15)</option>
+              <option value="moderate" selected>Moderate (0.2%–1.2%)</option>
+              <option value="large">Large (&ge; 0.5%)</option>
+            </select>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table class="data-table">
+            <tbody>
+              <tr><td>Total Gap Setups</td><td style="text-align: right; font-weight: 700;" id="tblGapN">140</td></tr>
+              <tr>
+                <td>Full EOD Fill Rate</td>
+                <td style="text-align: right;">
+                  <div class="bar-cell">
+                    <span class="text-green" id="tblGapEodTxt">78.6%</span>
+                    <div class="progress-track"><div class="progress-fill" id="barGapEod" style="width: 78.6%; background: var(--accent-green);"></div></div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td>Fill by 10:30 AM ET</td>
+                <td style="text-align: right;">
+                  <div class="bar-cell">
+                    <span class="text-cyan" id="tblGap1030Txt">66.4%</span>
+                    <div class="progress-track"><div class="progress-fill" id="barGap1030" style="width: 66.4%; background: var(--accent-cyan);"></div></div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td>Fill by 12:00 PM ET</td>
+                <td style="text-align: right;">
+                  <div class="bar-cell">
+                    <span class="text-cyan" id="tblGap1200Txt">72.1%</span>
+                    <div class="progress-track"><div class="progress-fill" id="barGap1200" style="width: 72.1%; background: var(--accent-cyan);"></div></div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td>Unfilled at 10:30 &rarr; Trend Cont.</td>
+                <td style="text-align: right;">
+                  <div class="bar-cell">
+                    <span class="text-yellow" id="tblGapContTxt">51.1%</span>
+                    <div class="progress-track"><div class="progress-fill" id="barGapCont" style="width: 51.1%; background: var(--accent-yellow);"></div></div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="guidance-block">
+            <div class="guidance-header">How to Read &amp; Trader Decision</div>
+            <div class="guidance-body">Moderate gaps (0.2%–1.2%) fill <b>78.6% of the time</b>. 66.4% fill by 10:30 AM.</div>
+            <div class="decision-rule"><b>Decision:</b> Enter gap fade at 09:35 ET. Target prior close. If unfilled by 10:30 AM, cut trade immediately.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>Opening Range Breakout (ORB) Trap</span>
+            <span class="panel-tag">FALSE BREAKOUTS</span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table class="data-table">
+            <thead>
+              <tr><th>Window</th><th>1.0x Reach</th><th>2.0x Reach</th><th>Full Reversal</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>ORB-15 (09:45)</b></td>
+                <td><span class="text-yellow" id="orb15Reach">32.5%</span></td>
+                <td><span id="orb15Reach2">9.7%</span></td>
+                <td><span class="text-red" id="orb15Rev">28.7%</span></td>
+              </tr>
+              <tr>
+                <td><b>ORB-30 (10:00)</b></td>
+                <td><span class="text-yellow" id="orb30Reach">24.0%</span></td>
+                <td><span id="orb30Reach2">7.6%</span></td>
+                <td><span class="text-red" id="orb30Rev">19.1%</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="guidance-block">
+            <div class="guidance-header">How to Read &amp; Trader Decision</div>
+            <div class="guidance-body">Only 32.5% of 15m breakouts reach 1x range extension. 28.7% reverse to break the opposite side.</div>
+            <div class="decision-rule"><b>Decision:</b> Never blindly buy the 15m breakout on AAPL. Wait for 10:30 AM Initial Balance confirmation instead.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>Gap-Fade Strategy Execution Log</span>
+            <span class="panel-tag">09:30–11:30 ET WINDOW</span>
+          </div>
+          <div class="pill-group">
+            <button class="pill-btn active" onclick="filterTradeLog('all', this)">All</button>
+            <button class="pill-btn" onclick="filterTradeLog('win', this)">Wins</button>
+            <button class="pill-btn" onclick="filterTradeLog('loss', this)">Losses</button>
+          </div>
+        </div>
+        <div class="panel-body" style="padding: 0;">
+          <div class="trade-log-container">
+            <table class="data-table" id="tradesTable">
+              <thead>
+                <tr><th>Date</th><th>Gap</th><th>Dir</th><th>Exit Time</th><th>Outcome</th><th>Return</th></tr>
+              </thead>
+              <tbody id="tradesTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    <!-- SECTION 5: UNIVERSAL QUANTITATIVE CLI ENGINE -->
+    <div class="section-title-bar">
+      <h2>05 // UNIVERSAL QUANTITATIVE CLI ENGINE &amp; CROSS-TICKER ANALYTICS</h2>
+      <span class="tag">COMMAND LINE ORCHESTRATION</span>
+    </div>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>Unified Algorithmic Pattern Execution Across Equities &amp; ETFs</span>
+          <span class="panel-tag">CLI ENGINE</span>
+        </div>
+        <div style="font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);">
+          Command: <code>uv run harvester patterns &lt;SYMBOL&gt; [OPTIONS]</code>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <!-- Left Column: Terminal Simulation & Copy Commands -->
+          <div>
+            <div style="font-size: 11px; font-weight: 700; color: var(--accent-cyan); font-family: var(--font-mono); margin-bottom: 8px;">
+              TERMINAL CLI EXECUTION
+            </div>
+            <div style="background: #020617; border: 1px solid var(--border-color); border-radius: 6px; padding: 12px; font-family: var(--font-mono); font-size: 11px; color: #cbd5e1; line-height: 1.6;">
+              <div style="color: var(--text-dim); margin-bottom: 6px;"># Run pattern detection for AAPL (Default 365 Days)</div>
+              <div style="color: var(--accent-green);">$ uv run harvester patterns AAPL</div>
+              <div style="color: var(--text-dim); margin: 8px 0 6px;"># Run across any harvested symbol with JSON output for APIs</div>
+              <div style="color: var(--accent-green);">$ uv run harvester patterns NVDA --days 180 --json</div>
+              <div style="color: var(--text-dim); margin: 8px 0 6px;"># Run against production PostgreSQL database</div>
+              <div style="color: var(--accent-green);">$ uv run harvester patterns SPY --db-url "postgresql://..."</div>
+            </div>
+            <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
+              <button class="pill-btn" onclick="copyCliCmd('uv run harvester patterns AAPL', this)">Copy AAPL Command</button>
+              <button class="pill-btn" onclick="copyCliCmd('uv run harvester patterns NVDA', this)">Copy NVDA Command</button>
+              <button class="pill-btn" onclick="copyCliCmd('uv run harvester patterns SPY', this)">Copy SPY Command</button>
+              <button class="pill-btn" onclick="copyCliCmd('uv run harvester patterns QQQ', this)">Copy QQQ Command</button>
+            </div>
+          </div>
+
+          <!-- Right Column: Command Parameters & Microservice Integration -->
+          <div>
+            <div style="font-size: 11px; font-weight: 700; color: var(--accent-purple); font-family: var(--font-mono); margin-bottom: 8px;">
+              COMMAND ARGUMENTS &amp; FLAGS
+            </div>
+            <table class="data-table" style="font-size: 11px;">
+              <thead>
+                <tr><th>Argument / Flag</th><th>Default</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>&lt;SYMBOL&gt;</code></td>
+                  <td><i>Required</i></td>
+                  <td>Target ticker symbol (e.g. <code>AAPL</code>, <code>NVDA</code>, <code>SPY</code>, <code>QQQ</code>)</td>
+                </tr>
+                <tr>
+                  <td><code>--days</code></td>
+                  <td><code>365</code></td>
+                  <td>Calendar day lookback window from latest bar</td>
+                </tr>
+                <tr>
+                  <td><code>--db-url</code></td>
+                  <td><code>sqlite:///...</code></td>
+                  <td>PostgreSQL or SQLite database connection URI</td>
+                </tr>
+                <tr>
+                  <td><code>--json</code></td>
+                  <td><code>False</code></td>
+                  <td>Emit raw structured JSON for GreeksView API daemons</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="guidance-block" style="margin-top: 10px;">
+              <div class="guidance-header">Microservice Integration</div>
+              <div class="guidance-body">
+                The pattern engine exports standardized statistical vectors for every bar and session. Downstream trading bots and options pricer microservices subscribe to these outputs to dynamically weight directional deltas and theta harvest spreads.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <div id="tickerModal">
+    <div class="modal-box">
+      <h3 id="modalTickerTitle">Harvest Intraday Bars</h3>
+      <p>The 5-minute dataset for <b id="modalTickerSymbol" class="text-cyan">NVDA</b> is not yet loaded in the local SQLite database. Run the harvester command below in your terminal to ingest 12 months of high-resolution bars:</p>
+      <div class="code-cmd" id="modalCmd">
+        uv run harvester run alphavantage --dataset intraday --symbols NVDA --interval 5min --months 2025-10,2025-11,2025-12,2026-01,2026-02,2026-03,2026-04,2026-05,2026-06,2026-07,2026-08,2026-09
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn cancel" onclick="closeTickerModal()">Close &amp; Keep AAPL</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let activeFilter = {
+      dateFrom: '2025-10-01',
+      dateTo: '2026-09-22',
+      gapFilter: 'moderate',
+      todMetric: 'returns',
+      tradeLogFilter: 'all'
+    };
+
+    window.addEventListener('DOMContentLoaded', () => {
+      if (!window.RAW_DATASET) {
+        console.error("RAW_DATASET not found. Ensure aapl_dataset.js is loaded.");
+        return;
+      }
+      recomputeAll();
+      initTodChart();
+      runLiveCalculator();
+    });
+
+    function runLiveCalculator() {
+      const o = parseFloat(document.getElementById('calcOpen').value) || 0;
+      const pc = parseFloat(document.getElementById('calcPrevClose').value) || 0;
+      const h45 = parseFloat(document.getElementById('calcHod45').value) || 0;
+      const l45 = parseFloat(document.getElementById('calcLod45').value) || 0;
+      const p = parseFloat(document.getElementById('calcCurrentPrice').value) || 0;
+      const v = parseFloat(document.getElementById('calcCurrentVwap').value) || 0;
+      const sig = parseFloat(document.getElementById('calcCurrentSigma').value) || 0.1;
+
+      // 1. Gap
+      if (pc > 0 && o > 0) {
+        const gapPct = (o - pc) / pc * 100;
+        const gapDir = gapPct >= 0 ? 'Gap Up' : 'Gap Down';
+        document.getElementById('calcGapDesc').innerText = `${gapDir} ${gapPct >= 0 ? '+' : ''}${gapPct.toFixed(2)}% ($${Math.abs(o - pc).toFixed(2)})`;
+        document.getElementById('calcGapTarget').innerText = `Target: $${pc.toFixed(2)} (${Math.abs(gapPct) >= 0.2 ? '66.4% Fill' : '74.9% Fill'})`;
+      }
+
+      // 2. Anchor
+      if (l45 > 0 && h45 > 0) {
+        const stopLong = (l45 - 0.10).toFixed(2);
+        const stopShort = (h45 + 0.10).toFixed(2);
+        document.getElementById('calcAnchorStop').innerText = `Long: $${stopLong} | Short: $${stopShort}`;
+      }
+
+      // 3. VWAP
+      if (v > 0 && sig > 0) {
+        const z = (p - v) / sig;
+        document.getElementById('calcVwapZscore').innerText = `${z >= 0 ? '+' : ''}${z.toFixed(2)}σ from VWAP Mean`;
+        document.getElementById('calcVwapProb').innerText = `Reversion Prob: 88.1% to $${v.toFixed(2)}`;
+      }
+
+      // 4. Initial Balance Targets
+      if (h45 > 0 && l45 > 0) {
+        const ibRng = h45 - l45;
+        const bullTarget = (h45 + 1.5 * ibRng).toFixed(2);
+        const bearTarget = (l45 - 1.5 * ibRng).toFixed(2);
+        document.getElementById('calcIbTarget').innerText = `Bull: $${bullTarget} | Bear: $${bearTarget}`;
+      }
+
+      // Verdict
+      let verdict = '<b>Desk Synthesis:</b> ';
+      const gapP = ((o - pc) / pc) * 100;
+      if (Math.abs(gapP) >= 0.2) {
+        verdict += `Moderate ${gapP > 0 ? 'Gap Up' : 'Gap Down'}. Fade to $${pc.toFixed(2)} before 10:30 AM ET. Invalidate if unfilled past 10:30. `;
+      }
+      const zScore = (p - v) / sig;
+      if (Math.abs(zScore) >= 1.8) {
+        verdict += `Current price is stretched at ${zScore.toFixed(1)}σ. High probability (88.1%) mean-reversion scalp back to VWAP $${v.toFixed(2)}.`;
+      } else {
+        verdict += `Price is near fair value (${zScore.toFixed(1)}σ). Wait for 10:30 AM Initial Balance breakout above $${h45.toFixed(2)} or below $${l45.toFixed(2)}.`;
+      }
+      document.getElementById('calcVerdict').innerHTML = verdict;
+    }
+
+    function handleTickerChange(val) {
+      if (val !== 'AAPL') {
+        document.getElementById('modalTickerTitle').innerText = `Harvest Intraday Bars for ${val}`;
+        document.getElementById('modalTickerSymbol').innerText = val;
+        document.getElementById('modalCmd').innerText = `uv run harvester run alphavantage --dataset intraday --symbols ${val} --interval 5min --months 2025-10,2025-11,2025-12,2026-01,2026-02,2026-03,2026-04,2026-05,2026-06,2026-07,2026-08,2026-09 --db-url sqlite:///greeksview_harvester.db`;
+        document.getElementById('tickerModal').style.display = 'flex';
+      }
+    }
+
+    function closeTickerModal() {
+      document.getElementById('tickerModal').style.display = 'none';
+      document.getElementById('tickerSelect').value = 'AAPL';
+    }
+
+    function setDateRangePreset(preset, btn) {
+      document.querySelectorAll('.pill-group .pill-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      const maxDate = new Date('2026-09-22');
+      let minDate = new Date('2025-10-01');
+
+      if (preset === '12M') minDate = new Date('2025-10-01');
+      else if (preset === '6M') minDate = new Date('2026-03-22');
+      else if (preset === '3M') minDate = new Date('2026-06-22');
+      else if (preset === '1M') minDate = new Date('2026-08-22');
+
+      document.getElementById('dateFrom').value = minDate.toISOString().split('T')[0];
+      document.getElementById('dateTo').value = maxDate.toISOString().split('T')[0];
+      activeFilter.dateFrom = document.getElementById('dateFrom').value;
+      activeFilter.dateTo = document.getElementById('dateTo').value;
+
+      recomputeAll();
+    }
+
+    function applyCustomDate() {
+      activeFilter.dateFrom = document.getElementById('dateFrom').value;
+      activeFilter.dateTo = document.getElementById('dateTo').value;
+      document.querySelectorAll('.pill-group .pill-btn').forEach(b => b.classList.remove('active'));
+      recomputeAll();
+    }
+
+    function recomputeAll() {
+      if (!window.RAW_DATASET || !window.RAW_DATASET.days) return;
+      const filteredDays = RAW_DATASET.days.filter(d => d.date >= activeFilter.dateFrom && d.date <= activeFilter.dateTo);
+      const totalDays = filteredDays.length;
+      document.getElementById('sessionCountBadge').innerText = `${totalDays} SESSIONS`;
+
+      if (totalDays === 0) return;
+
+      const hod45 = filteredDays.filter(d => d.hod_in_45).length;
+      const lod45 = filteredDays.filter(d => d.lod_in_45).length;
+      const either45 = filteredDays.filter(d => d.hod_in_45 || d.lod_in_45).length;
+
+      document.getElementById('metricAnchor').innerHTML = `${(either45 / totalDays * 100).toFixed(1)}<span class="unit">%</span>`;
+      document.getElementById('subHod').innerText = `${(hod45 / totalDays * 100).toFixed(1)}%`;
+      document.getElementById('subLod').innerText = `${(lod45 / totalDays * 100).toFixed(1)}%`;
+
+      const activeGaps = filteredDays.filter(d => d.gap_type !== 'FLAT');
+      const gapFilled = activeGaps.filter(d => d.gap_filled).length;
+      const gap1030 = activeGaps.filter(d => d.gap_fill_1030).length;
+
+      document.getElementById('metricGapEod').innerHTML = `${(gapFilled / (activeGaps.length || 1) * 100).toFixed(1)}<span class="unit">%</span>`;
+      document.getElementById('subGap1030').innerText = `${(gap1030 / (activeGaps.length || 1) * 100).toFixed(1)}%`;
+      document.getElementById('subGapCount').innerText = activeGaps.length;
+
+      const orb15Valid = filteredDays.filter(d => d.orb15_dir !== 'NONE');
+      const orb15Reach = orb15Valid.filter(d => d.orb15_hit1x).length;
+      const orb15Rev = orb15Valid.filter(d => d.orb15_rev).length;
+
+      const orbTrapPct = 100 - (orb15Reach / (orb15Valid.length || 1) * 100);
+      document.getElementById('metricOrbTrap').innerHTML = `${orbTrapPct.toFixed(1)}<span class="unit">%</span>`;
+      document.getElementById('subOrbReach').innerText = `${(orb15Reach / (orb15Valid.length || 1) * 100).toFixed(1)}%`;
+      document.getElementById('subOrbRev').innerText = `${(orb15Rev / (orb15Valid.length || 1) * 100).toFixed(1)}%`;
+
+      document.getElementById('orb15Reach').innerText = `${(orb15Reach / (orb15Valid.length || 1) * 100).toFixed(1)}%`;
+      document.getElementById('orb15Rev').innerText = `${(orb15Rev / (orb15Valid.length || 1) * 100).toFixed(1)}%`;
+
+      const orb30Valid = filteredDays.filter(d => d.orb30_dir !== 'NONE');
+      const orb30Reach = orb30Valid.filter(d => d.orb30_hit1x).length;
+      const orb30Rev = orb30Valid.filter(d => d.orb30_rev).length;
+      document.getElementById('orb30Reach').innerText = `${(orb30Reach / (orb30Valid.length || 1) * 100).toFixed(1)}%`;
+      document.getElementById('orb30Rev').innerText = `${(orb30Rev / (orb30Valid.length || 1) * 100).toFixed(1)}%`;
+
+      renderDowTable(filteredDays);
+      updateGapDetails(filteredDays);
+      renderTradeLog(filteredDays);
+      drawTodChart();
+    }
+
+    function renderDowTable(days) {
+      const dowMap = { 0: 'Monday', 1: 'Tuesday', 2: 'Wednesday', 3: 'Thursday', 4: 'Friday' };
+      const dowStats = [0, 1, 2, 3, 4].map(w => {
+        const sub = days.filter(d => d.dow_num === w);
+        if (sub.length === 0) return { dow: dowMap[w], count: 0, winRate: 0, avgRet: 0, medRet: 0, avgRng: 0 };
+        const wins = sub.filter(d => d.green).length;
+        const rets = sub.map(d => d.ret_pct).sort((a,b) => a - b);
+        const ranges = sub.map(d => d.range_pct);
+        const medRet = rets[Math.floor(rets.length / 2)];
+        const avgRet = rets.reduce((a,b) => a+b, 0) / sub.length;
+        const avgRng = ranges.reduce((a,b) => a+b, 0) / sub.length;
+        return { dow: dowMap[w], count: sub.length, winRate: (wins / sub.length * 100), avgRet, medRet, avgRng };
+      });
+
+      const tbody = document.getElementById('dowTableBody');
+      tbody.innerHTML = dowStats.map(s => `
+        <tr>
+          <td><b>${s.dow}</b></td>
+          <td>${s.count}</td>
+          <td>
+            <div class="bar-cell">
+              <span class="${s.winRate >= 50 ? 'text-green' : 'text-red'}">${s.winRate.toFixed(1)}%</span>
+              <div class="progress-track"><div class="progress-fill" style="width: ${s.winRate}%; background: ${s.winRate >= 50 ? 'var(--accent-green)' : 'var(--accent-red)'};"></div></div>
+            </div>
+          </td>
+          <td class="${s.avgRet >= 0 ? 'text-green' : 'text-red'}">${s.avgRet >= 0 ? '+' : ''}${s.avgRet.toFixed(3)}%</td>
+          <td class="${s.medRet >= 0 ? 'text-green' : 'text-red'}">${s.medRet >= 0 ? '+' : ''}${s.medRet.toFixed(3)}%</td>
+          <td>${s.avgRng.toFixed(2)}%</td>
+        </tr>
+      `).join('');
+
+      const tue = dowStats[1];
+      const wed = dowStats[2];
+      document.getElementById('metricDowWin').innerHTML = `${tue.winRate.toFixed(1)}<span class="unit">%</span>`;
+      document.getElementById('subTueRet').innerText = `${tue.avgRet >= 0 ? '+' : ''}${tue.avgRet.toFixed(3)}%`;
+      document.getElementById('subWedRet').innerText = `${wed.avgRet >= 0 ? '+' : ''}${wed.avgRet.toFixed(3)}%`;
+    }
+
+    function filterGapStats(mode) {
+      activeFilter.gapFilter = mode;
+      const filteredDays = RAW_DATASET.days.filter(d => d.date >= activeFilter.dateFrom && d.date <= activeFilter.dateTo);
+      updateGapDetails(filteredDays);
+    }
+
+    function updateGapDetails(days) {
+      let g = days.filter(d => d.gap_type !== 'FLAT');
+      if (activeFilter.gapFilter === 'moderate') {
+        g = g.filter(d => Math.abs(d.gap_pct) >= 0.20 && Math.abs(d.gap_pct) <= 1.20);
+      } else if (activeFilter.gapFilter === 'large') {
+        g = g.filter(d => Math.abs(d.gap_pct) >= 0.50);
+      }
+
+      const n = g.length;
+      document.getElementById('tblGapN').innerText = n;
+      if (n === 0) return;
+
+      const eod = g.filter(d => d.gap_filled).length / n * 100;
+      const f1030 = g.filter(d => d.gap_fill_1030).length / n * 100;
+      const f1200 = g.filter(d => d.gap_filled && d.gap_fill_time <= '12:00').length / n * 100;
+      
+      const un1030 = g.filter(d => !d.gap_fill_1030);
+      const cont = un1030.filter(d => (d.gap_type === 'UP' && d.close > d.open) || (d.gap_type === 'DOWN' && d.close < d.open)).length / (un1030.length || 1) * 100;
+
+      document.getElementById('tblGapEodTxt').innerText = `${eod.toFixed(1)}%`;
+      document.getElementById('barGapEod').style.width = `${eod}%`;
+
+      document.getElementById('tblGap1030Txt').innerText = `${f1030.toFixed(1)}%`;
+      document.getElementById('barGap1030').style.width = `${f1030}%`;
+
+      document.getElementById('tblGap1200Txt').innerText = `${f1200.toFixed(1)}%`;
+      document.getElementById('barGap1200').style.width = `${f1200}%`;
+
+      document.getElementById('tblGapContTxt').innerText = `${cont.toFixed(1)}%`;
+      document.getElementById('barGapCont').style.width = `${cont}%`;
+    }
+
+    function filterTradeLog(filter, btn) {
+      activeFilter.tradeLogFilter = filter;
+      btn.parentElement.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const filteredDays = RAW_DATASET.days.filter(d => d.date >= activeFilter.dateFrom && d.date <= activeFilter.dateTo);
+      renderTradeLog(filteredDays);
+    }
+
+    function renderTradeLog(days) {
+      const trades = [];
+      for (const d of days) {
+        if (d.prev_close && Math.abs(d.gap_pct) >= 0.20 && Math.abs(d.gap_pct) <= 1.20) {
+          const isWin = d.gap_fill_1030 || (d.gap_filled && d.gap_fill_time <= '11:30');
+          const exitTime = isWin ? d.gap_fill_time : '11:30';
+          const ret = isWin ? Math.abs(d.gap_pct) : (d.gap_type === 'UP' ? (d.open - d.close)/d.open*100 : (d.close - d.open)/d.open*100);
+          trades.push({
+            date: d.date,
+            gapPct: d.gap_pct,
+            dir: d.gap_type === 'UP' ? 'SHORT' : 'LONG',
+            exitTime,
+            win: isWin,
+            ret: isWin ? ret : -Math.abs(ret * 0.5)
+          });
+        }
+      }
+
+      let displayTrades = trades;
+      if (activeFilter.tradeLogFilter === 'win') displayTrades = trades.filter(t => t.win);
+      else if (activeFilter.tradeLogFilter === 'loss') displayTrades = trades.filter(t => !t.win);
+
+      const tbody = document.getElementById('tradesTableBody');
+      tbody.innerHTML = displayTrades.slice(-25).reverse().map(t => `
+        <tr>
+          <td>${t.date}</td>
+          <td>${t.gapPct >= 0 ? '+' : ''}${t.gapPct.toFixed(2)}%</td>
+          <td><span class="${t.dir === 'LONG' ? 'text-green' : 'text-red'}">${t.dir}</span></td>
+          <td>${t.exitTime}</td>
+          <td><span class="pill-badge ${t.win ? 'win' : 'loss'}">${t.win ? 'WIN' : 'FAIL'}</span></td>
+          <td class="${t.ret >= 0 ? 'text-green' : 'text-red'}">${t.ret >= 0 ? '+' : ''}${t.ret.toFixed(2)}%</td>
+        </tr>
+      `).join('');
+    }
+
+    let todCanvas, ctx;
+
+    function initTodChart() {
+      todCanvas = document.getElementById('todCanvas');
+      ctx = todCanvas.getContext('2d');
+      window.addEventListener('resize', drawTodChart);
+      drawTodChart();
+    }
+
+    function switchTodMode(mode, btn) {
+      activeFilter.todMetric = mode;
+      btn.parentElement.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      const labels = {
+        returns: 'Average 5-Min Return (%)',
+        ranges: 'Average 5-Min Range (%)',
+        volumes: 'Average 5-Min Volume',
+        win_rate: 'Up-Bar Probability (Win Rate %)'
+      };
+      document.getElementById('chartLegendLabel').innerText = labels[mode];
+      drawTodChart();
+    }
+
+    function drawTodChart() {
+      if (!todCanvas) return;
+      const rect = todCanvas.parentElement.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      todCanvas.width = rect.width * dpr;
+      todCanvas.height = rect.height * dpr;
+      ctx.resetTransform();
+      ctx.scale(dpr, dpr);
+
+      const w = rect.width;
+      const h = rect.height;
+      ctx.clearRect(0, 0, w, h);
+
+      if (!window.RAW_DATASET || !window.RAW_DATASET.tod_curve) return;
+      const data = RAW_DATASET.tod_curve;
+      if (!data || data.length === 0) return;
+
+      const padding = { top: 20, right: 20, bottom: 26, left: 45 };
+      const plotW = w - padding.left - padding.right;
+      const plotH = h - padding.top - padding.bottom;
+
+      const timeToX = (timeStr) => {
+        const idx = data.findIndex(d => d.time === timeStr);
+        if (idx === -1) return padding.left;
+        return padding.left + (idx / (data.length - 1)) * plotW;
+      };
+
+      const x1 = timeToX('09:30');
+      const x2 = timeToX('09:40');
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.08)';
+      ctx.fillRect(x1, padding.top, x2 - x1, plotH);
+
+      const x3 = timeToX('10:00');
+      const x4 = timeToX('11:30');
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.06)';
+      ctx.fillRect(x3, padding.top, x4 - x3, plotH);
+
+      const x5 = timeToX('15:50');
+      const x6 = timeToX('16:00');
+      ctx.fillStyle = 'rgba(168, 85, 247, 0.08)';
+      ctx.fillRect(x5, padding.top, x6 - x5, plotH);
+
+      const metric = activeFilter.todMetric === 'returns' ? 'avg_ret' : (activeFilter.todMetric === 'ranges' ? 'avg_range' : (activeFilter.todMetric === 'volumes' ? 'avg_vol' : 'win_rate'));
+      const vals = data.map(d => d[metric]);
+      let minVal = Math.min(...vals);
+      let maxVal = Math.max(...vals);
+
+      if (metric === 'avg_ret') {
+        const maxAbs = Math.max(Math.abs(minVal), Math.abs(maxVal)) * 1.15;
+        minVal = -maxAbs;
+        maxVal = maxAbs;
+      } else {
+        minVal = minVal * 0.9;
+        maxVal = maxVal * 1.1;
+      }
+
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 1;
+      const numLines = 5;
+      for (let i = 0; i <= numLines; i++) {
+        const y = padding.top + (i / numLines) * plotH;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(padding.left + plotW, y);
+        ctx.stroke();
+
+        const labelVal = maxVal - (i / numLines) * (maxVal - minVal);
+        ctx.fillStyle = '#64748b';
+        ctx.font = '10px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(metric === 'avg_vol' ? (labelVal/1e6).toFixed(1)+'M' : labelVal.toFixed(metric === 'avg_ret' ? 3 : 1) + '%', padding.left - 6, y + 3);
+      }
+
+      if (minVal < 0 && maxVal > 0) {
+        const zeroY = padding.top + ((maxVal - 0) / (maxVal - minVal)) * plotH;
+        ctx.strokeStyle = '#334155';
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(padding.left, zeroY);
+        ctx.lineTo(padding.left + plotW, zeroY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.beginPath();
+      for (let i = 0; i < data.length; i++) {
+        const px = padding.left + (i / (data.length - 1)) * plotW;
+        const py = padding.top + ((maxVal - vals[i]) / (maxVal - minVal)) * plotH;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      const lastPx = padding.left + plotW;
+      const firstPx = padding.left;
+      const bottomY = padding.top + plotH;
+      ctx.lineTo(lastPx, bottomY);
+      ctx.lineTo(firstPx, bottomY);
+      ctx.closePath();
+      const grad = ctx.createLinearGradient(0, padding.top, 0, bottomY);
+      grad.addColorStop(0, 'rgba(56, 189, 248, 0.25)');
+      grad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      const timeLabels = ['09:30', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00'];
+      ctx.fillStyle = '#64748b';
+      ctx.textAlign = 'center';
+      timeLabels.forEach(t => {
+        const tx = timeToX(t);
+        ctx.fillText(t, tx, h - 8);
+      });
+    }
+
+    function copyCliCmd(text, btn) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          if (btn) {
+            const orig = btn.innerText;
+            btn.innerText = 'Copied to Clipboard!';
+            btn.style.borderColor = 'var(--accent-green)';
+            btn.style.color = 'var(--accent-green)';
+            setTimeout(() => {
+              btn.innerText = orig;
+              btn.style.borderColor = '';
+              btn.style.color = '';
+            }, 1800);
+          }
+        });
+      } else {
+        prompt("Copy command:", text);
+      }
+    }
+  </script>
+</body>
+</html>

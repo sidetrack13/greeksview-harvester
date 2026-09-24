@@ -65,6 +65,7 @@ def is_trading_weekday(iso_day: str) -> bool:
     except ValueError:
         return False
 
+
 # HOW MANY CHAIN FETCHES MAY BE IN FLIGHT AT ONCE. Not a rate limit — the pacer
 # is the only thing that decides requests per second and per minute. This only
 # decides how many of them may be WAITING on the vendor together, and the loop
@@ -362,7 +363,8 @@ class AlphaVantageWorker(BaseWorker):
                         rep.skipped["daily_non_session"] += 1
                         logger.warning(
                             "Refusing a %s daily bar for %s: the market does not trade that day",
-                            t_date, sym,
+                            t_date,
+                            sym,
                         )
                         continue
                     parsed = self._parse_bar(bar, _DAILY_FIELDS, rep, "daily")
@@ -378,7 +380,7 @@ class AlphaVantageWorker(BaseWorker):
                 upserted += u
 
             if progress_tracker:
-                latest_dt = records[0]["trade_date"] if records else "daily"
+                latest_dt = str(records[0]["trade_date"]) if records else "daily"
                 progress_tracker.update_session(
                     ticker=sym, trading_day=latest_dt, records_count=len(records), upserted=u
                 )
