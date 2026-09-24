@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 import respx
+import typer
 from typer.testing import CliRunner
 
 import harvester.core.db as db_module
@@ -1077,7 +1078,7 @@ def test_default_pacing_settings_are_conservative(monkeypatch: pytest.MonkeyPatc
     monkeypatch.delenv("ALPHAVANTAGE_RPM", raising=False)
     monkeypatch.delenv("ALPHAVANTAGE_MAX_PER_SECOND", raising=False)
     settings = Settings(_env_file=None)
-    assert (settings.alphavantage_rpm, settings.alphavantage_max_per_second) == (1100, 25)
+    assert (settings.alphavantage_rpm, settings.alphavantage_max_per_second) == (1100, 20)
 
 
 def test_worker_pacer_takes_its_limits_from_config(tmp_path: Path) -> None:
@@ -1395,8 +1396,7 @@ async def test_a_worker_nobody_configured_still_fetches_more_than_one_at_a_time(
 
     assert DEFAULT_OPTIONS_CONCURRENCY > 1, "the shipped default is serial again"
     assert probe.max_in_flight == DEFAULT_OPTIONS_CONCURRENCY, (
-        f"a default worker ran {probe.max_in_flight} request(s) at once, "
-        f"not the shipped {DEFAULT_OPTIONS_CONCURRENCY}"
+        f"a default worker ran {probe.max_in_flight} request(s) at once, not the shipped {DEFAULT_OPTIONS_CONCURRENCY}"
     )
 
 
@@ -1502,11 +1502,113 @@ async def test_refusals_are_reported_in_symbol_order_when_symbols_run_together(t
     worker.client.fetch_json = _RefuseSymbols(_row_for_symbol_and_date)
 
     async with DatabaseManager(worker.settings) as db:
-        await worker.download_historical_options(
-            db, _MANY_SYMBOLS[:5], trade_dates=["2026-07-02"], report=report
-        )
+        await worker.download_historical_options(db, _MANY_SYMBOLS[:5], trade_dates=["2026-07-02"], report=report)
 
     assert report.fetch_errors == [
         "HISTORICAL_OPTIONS ZZZ01 2026-07-02: status 503 (http_error)",
         "HISTORICAL_OPTIONS ZZZ03 2026-07-02: status 503 (http_error)",
     ]
+
+
+# ---------------------------------------------------------------------------
+# A MOCK RUN MUST NOT REACH A REAL STORE, AND A WEEKEND IS NOT A SESSION
+#
+# On 16 Sep 2026 three fabricated daily bars reached the production harvest:
+# SPY on Labor Day, a Saturday and a Sunday, at 456-464 while the real index
+# was 757-774, with volumes round to the hundred thousand. They match the
+# --mock generator exactly (open 450+d, high 455+d, volume 50,000,000+d*100,000)
+# and were written by a mock run pointed at the real --db-url.
+#
+# Three rows, and each one mattered out of proportion: SPY's own bars are the
+# market calendar --sessions-from reads, so every fake session became a target
+# date for all 5,350 symbols, and SPY's volatility grade is computed from that
+# same series. What follows closes the door on both paths and refuses the
+# shape itself.
+# ---------------------------------------------------------------------------
+
+_SAT, _SUN, _FRI = "2026-09-12", "2026-09-13", "2026-09-11"
+
+
+async def test_a_weekend_daily_bar_is_refused_and_counted(tmp_path: Path) -> None:
+    db_file = tmp_path / "weekend.db"
+    worker = AlphaVantageWorker(settings=fast_settings(db_file))
+    worker.client.fetch_json = RecordingFetch(
+        lambda fn, p: {
+            "Time Series (Daily)": {
+                _FRI: daily_bar("764.29"),
+                _SAT: daily_bar("457.0"),
+                _SUN: daily_bar("456.0"),
+            }
+        }
+    )
+    report = HarvestReport()
+
+    async with DatabaseManager(worker.settings) as db:
+        await worker.download_daily_bars(db, [SYM], report=report)
+
+    assert rows(db_file, "SELECT trade_date FROM stock_bars_daily ORDER BY trade_date") == [(_FRI,)], (
+        "a Saturday or Sunday bar was stored"
+    )
+    assert report.skipped["daily_non_session"] == 2, (
+        f"the two weekend bars were dropped without being counted: {dict(report.skipped)}"
+    )
+
+
+def test_is_trading_weekday_decides_from_the_date_alone() -> None:
+    from harvester.workers.alphavantage.worker import is_trading_weekday
+
+    assert is_trading_weekday(_FRI) is True
+    assert is_trading_weekday(_SAT) is False
+    assert is_trading_weekday(_SUN) is False
+    assert is_trading_weekday("not a date") is False
+    # A HOLIDAY IS NOT CAUGHT, and the docstring says so: 2026-09-07 is Labor
+    # Day and reads as an ordinary Monday. The guard below is what stops it.
+    assert is_trading_weekday("2026-09-07") is True
+
+
+async def test_a_mock_run_refuses_a_database_that_already_holds_a_harvest(tmp_path: Path) -> None:
+    db_file = tmp_path / "real_store.db"
+    live = AlphaVantageWorker(settings=fast_settings(db_file))
+    live.client.fetch_json = RecordingFetch(lambda fn, p: {"Time Series (Daily)": {_FRI: daily_bar("764.29")}})
+    res = await live.run_once(dataset="daily", symbols=[SYM])
+    assert res.status == "success", res.errors
+    assert rows(db_file, "SELECT COUNT(*) FROM stock_bars_daily")[0][0] == 1
+
+    before = rows(db_file, "SELECT COUNT(*) FROM stock_bars_daily")[0][0]
+    mocker = AlphaVantageWorker(settings=Settings(_env_file=None, database_url=f"sqlite:///{db_file}"))
+    res2 = await mocker.run_once(dataset="daily", symbols=[SYM], use_mock=True)
+
+    assert res2.status != "success", "a mock run wrote into a database holding a harvest"
+    assert rows(db_file, "SELECT COUNT(*) FROM stock_bars_daily")[0][0] == before, "rows were added"
+    assert not sqlite_file_is_mock(str(db_file)), (
+        "the harvest was stamped mock, which is what stops sync-pg taking any of it"
+    )
+
+
+async def test_a_mock_run_still_owns_a_file_with_no_harvest_in_it(tmp_path: Path) -> None:
+    """The refusal is about harvested ROWS, not about the file existing:
+    connect() creates the schema before mark_mock_written is reached."""
+    db_file = tmp_path / "fresh.db"
+    worker = AlphaVantageWorker(settings=Settings(_env_file=None, database_url=f"sqlite:///{db_file}"))
+    res = await worker.run_once(dataset="daily", symbols=[SYM], use_mock=True)
+    assert res.status == "success", res.errors
+    assert sqlite_file_is_mock(str(db_file))
+
+
+def test_the_cli_refuses_mock_against_an_existing_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    real = tmp_path / "harvest.db"
+    conn = sqlite3.connect(real)
+    conn.execute("CREATE TABLE stock_bars_daily (symbol TEXT, trade_date TEXT)")
+    conn.execute("INSERT INTO stock_bars_daily VALUES ('ZZZT','2026-09-11')")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(typer.Exit):
+        _resolve_settings(mock=True, db_url=f"sqlite:///{real}")
+    assert not sqlite_file_is_mock(str(real)), "the refused file was stamped anyway"
+
+    fresh = tmp_path / "brand_new.db"
+    routed = _resolve_settings(mock=True, db_url=f"sqlite:///{fresh}")
+    assert routed.database_url == f"sqlite:///{fresh}"
+    assert sqlite_file_is_mock(str(fresh)), "a file the mock run created was not stamped"

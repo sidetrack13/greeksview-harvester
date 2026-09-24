@@ -83,14 +83,16 @@ class PatternEngine:
             ts = datetime.fromisoformat(r[0])
             t_str = ts.strftime("%H:%M")
             if "09:30" <= t_str <= "16:00":
-                bars_by_day[ts.date().isoformat()].append({
-                    "time": t_str,
-                    "open": round(float(r[1]), 2),
-                    "high": round(float(r[2]), 2),
-                    "low": round(float(r[3]), 2),
-                    "close": round(float(r[4]), 2),
-                    "volume": int(r[5]),
-                })
+                bars_by_day[ts.date().isoformat()].append(
+                    {
+                        "time": t_str,
+                        "open": round(float(r[1]), 2),
+                        "high": round(float(r[2]), 2),
+                        "low": round(float(r[3]), 2),
+                        "close": round(float(r[4]), 2),
+                        "volume": int(r[5]),
+                    }
+                )
                 time_volumes[t_str].append(float(r[5]))
 
         sorted_days = sorted(bars_by_day.keys())
@@ -137,22 +139,20 @@ class PatternEngine:
                         if b["time"] <= "10:30":
                             f1030 = True
                         break
-                eod_cont = (gap_pct > 0 and cb[-1]["close"] > c_open) or (
-                    gap_pct < 0 and cb[-1]["close"] < c_open
+                eod_cont = (gap_pct > 0 and cb[-1]["close"] > c_open) or (gap_pct < 0 and cb[-1]["close"] < c_open)
+                active_gaps.append(
+                    {
+                        "filled": filled,
+                        "f1030": f1030,
+                        "eod_cont": eod_cont,
+                    }
                 )
-                active_gaps.append({
-                    "filled": filled,
-                    "f1030": f1030,
-                    "eod_cont": eod_cont,
-                })
 
         ng = len(active_gaps)
         gap_fill_eod = sum(1 for g in active_gaps if g["filled"]) / (ng or 1) * 100
         gap_fill_1030 = sum(1 for g in active_gaps if g["f1030"]) / (ng or 1) * 100
         unfilled_1030 = [g for g in active_gaps if not g["f1030"]]
-        gap_cont_rate = (
-            sum(1 for g in unfilled_1030 if g["eod_cont"]) / (len(unfilled_1030) or 1) * 100
-        )
+        gap_cont_rate = sum(1 for g in unfilled_1030 if g["eod_cont"]) / (len(unfilled_1030) or 1) * 100
 
         # 3. Fair Value Gaps (FVG)
         fvg_setups = []
@@ -165,18 +165,12 @@ class PatternEngine:
                 if b3["low"] > b1["high"] + 0.08:
                     size = b3["low"] - b1["high"]
                     retested = any(pb["low"] <= b3["low"] for pb in day_bars[i + 2 :])
-                    held = any(
-                        pb["low"] <= b3["low"] and pb["close"] >= b1["high"]
-                        for pb in day_bars[i + 2 :]
-                    )
+                    held = any(pb["low"] <= b3["low"] and pb["close"] >= b1["high"] for pb in day_bars[i + 2 :])
                     fvg_setups.append({"retested": retested, "held": held, "size": size})
                 elif b1["low"] > b3["high"] + 0.08:
                     size = b1["low"] - b3["high"]
                     retested = any(pb["high"] >= b3["high"] for pb in day_bars[i + 2 :])
-                    held = any(
-                        pb["high"] >= b3["high"] and pb["close"] <= b1["low"]
-                        for pb in day_bars[i + 2 :]
-                    )
+                    held = any(pb["high"] >= b3["high"] and pb["close"] <= b1["low"] for pb in day_bars[i + 2 :])
                     fvg_setups.append({"retested": retested, "held": held, "size": size})
 
         nfvg = len(fvg_setups)
@@ -204,12 +198,14 @@ class PatternEngine:
                 var = max(0.0, (cum_pv2 / cum_v) - (vwap**2))
                 sigma = math.sqrt(var) if var > 0 else 0.01
 
-                if b["time"] >= "10:00" and not touched:
-                    if b["high"] >= vwap + 2.0 * sigma or b["low"] <= vwap - 2.0 * sigma:
-                        touched = True
-                if touched and not reverted:
-                    if b["low"] <= vwap <= b["high"]:
-                        reverted = True
+                if (
+                    b["time"] >= "10:00"
+                    and not touched
+                    and (b["high"] >= vwap + 2.0 * sigma or b["low"] <= vwap - 2.0 * sigma)
+                ):
+                    touched = True
+                if touched and not reverted and (b["low"] <= vwap <= b["high"]):
+                    reverted = True
             if touched:
                 vwap_touches += 1
                 if reverted:
@@ -327,14 +323,16 @@ class PatternEngine:
                 wins = sum(1 for db in sub if db[-1]["close"] > db[0]["open"])
                 rets = [(db[-1]["close"] - db[0]["open"]) / db[0]["open"] * 100 for db in sub]
                 ranges = [(max(b["high"] for b in db) - min(b["low"] for b in db)) / db[0]["open"] * 100 for db in sub]
-                dow_stats.append({
-                    "day": dow_map[w],
-                    "sessions": cnt,
-                    "win_rate": round(wins / cnt * 100, 1),
-                    "avg_return": round(sum(rets) / cnt, 3),
-                    "median_return": round(statistics.median(rets), 3),
-                    "avg_range": round(sum(ranges) / cnt, 2),
-                })
+                dow_stats.append(
+                    {
+                        "day": dow_map[w],
+                        "sessions": cnt,
+                        "win_rate": round(wins / cnt * 100, 1),
+                        "avg_return": round(sum(rets) / cnt, 3),
+                        "median_return": round(statistics.median(rets), 3),
+                        "avg_range": round(sum(ranges) / cnt, 2),
+                    }
+                )
 
         # 11. Options Strategy Recommendations
         options_recs = [

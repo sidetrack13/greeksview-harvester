@@ -73,6 +73,10 @@ def to_pg_date(val: Any) -> date | None:
     return None
 
 
+class MockWriteRefusedError(RuntimeError):
+    """Raised when a mock run is pointed at a database that already holds a harvest."""
+
+
 def mark_sqlite_file_mock(path: str) -> None:
     """Stamp a SQLite file as written by a mock run (creates the file if absent)."""
     if not path or path == ":memory:":
@@ -356,6 +360,27 @@ CREATE TABLE IF NOT EXISTS listing_status (
     status TEXT NOT NULL CHECK (status IN ('Active', 'Delisted')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS harvester_progress (
+    dataset TEXT PRIMARY KEY,
+    worker_name TEXT NOT NULL,
+    total_tickers INTEGER NOT NULL,
+    tickers_done INTEGER NOT NULL,
+    total_days INTEGER NOT NULL,
+    current_ticker TEXT,
+    current_trading_day TEXT,
+    completed_units INTEGER NOT NULL,
+    total_units INTEGER NOT NULL,
+    pct_complete REAL NOT NULL,
+    pct_remaining REAL NOT NULL,
+    rate_per_second REAL NOT NULL,
+    elapsed_seconds REAL NOT NULL,
+    eta_display TEXT,
+    upserted_records INTEGER NOT NULL,
+    errors_count INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 POSTGRES_SCHEMA = """
@@ -616,6 +641,27 @@ CREATE TABLE IF NOT EXISTS listing_status (
     ipo_date DATE,
     delisting_date DATE,
     status VARCHAR(16) NOT NULL CHECK (status IN ('Active', 'Delisted')),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS harvester_progress (
+    dataset VARCHAR(64) PRIMARY KEY,
+    worker_name VARCHAR(64) NOT NULL,
+    total_tickers INTEGER NOT NULL,
+    tickers_done INTEGER NOT NULL,
+    total_days INTEGER NOT NULL,
+    current_ticker VARCHAR(32),
+    current_trading_day VARCHAR(32),
+    completed_units INTEGER NOT NULL,
+    total_units INTEGER NOT NULL,
+    pct_complete NUMERIC(6,2) NOT NULL,
+    pct_remaining NUMERIC(6,2) NOT NULL,
+    rate_per_second NUMERIC(10,2) NOT NULL,
+    elapsed_seconds NUMERIC(12,2) NOT NULL,
+    eta_display VARCHAR(32),
+    upserted_records INTEGER NOT NULL,
+    errors_count INTEGER NOT NULL,
+    status VARCHAR(32) NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 """
@@ -2069,13 +2115,258 @@ class DatabaseManager:
                 )
                 return {r[0].isoformat() if isinstance(r[0], date) else str(r[0]) for r in rows}
 
+    async def get_stored_options_dates_for_symbols(self, symbols: list[str]) -> dict[str, set[str]]:
+        """Return a mapping of symbol -> set of stored trade dates in options_chains_eod."""
+        norm_symbols = [s.strip().upper() for s in symbols if s.strip()]
+        res: dict[str, set[str]] = {s: set() for s in norm_symbols}
+        if not norm_symbols:
+            return res
+
+        try:
+            if self.settings.is_sqlite:
+                assert self._sqlite_conn is not None
+                chunk_size = 500
+                for i in range(0, len(norm_symbols), chunk_size):
+                    chunk = norm_symbols[i : i + chunk_size]
+                    placeholders = ",".join("?" for _ in chunk)
+                    async with self._sqlite_conn.execute(
+                        f"SELECT DISTINCT symbol, trade_date FROM options_chains_eod WHERE symbol IN ({placeholders})",
+                        chunk,
+                    ) as cur:
+                        rows = await cur.fetchall()
+                        for sym, dt in rows:
+                            res.setdefault(str(sym), set()).add(str(dt))
+            else:
+                assert self._pg_pool is not None
+                async with self._pg_pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT DISTINCT symbol, trade_date FROM options_chains_eod WHERE symbol = ANY($1::text[])",
+                        norm_symbols,
+                    )
+                    for r in rows:
+                        sym = str(r["symbol"])
+                        dt = r["trade_date"]
+                        dt_str = dt.isoformat() if isinstance(dt, date) else str(dt)
+                        res.setdefault(sym, set()).add(dt_str)
+        except Exception as e:
+            logger.warning("Could not query stored options dates for symbols: %s", e)
+        return res
+
+    async def get_stored_daily_symbols(self, symbols: list[str]) -> set[str]:
+        """Return the set of symbols that have daily bars stored in stock_bars_daily."""
+        norm_symbols = [s.strip().upper() for s in symbols if s.strip()]
+        if not norm_symbols:
+            return set()
+        try:
+            if self.settings.is_sqlite:
+                assert self._sqlite_conn is not None
+                chunk_size = 500
+                found: set[str] = set()
+                for i in range(0, len(norm_symbols), chunk_size):
+                    chunk = norm_symbols[i : i + chunk_size]
+                    placeholders = ",".join("?" for _ in chunk)
+                    async with self._sqlite_conn.execute(
+                        f"SELECT DISTINCT symbol FROM stock_bars_daily WHERE symbol IN ({placeholders})",
+                        chunk,
+                    ) as cur:
+                        rows = await cur.fetchall()
+                        for r in rows:
+                            found.add(str(r[0]))
+                return found
+            else:
+                assert self._pg_pool is not None
+                async with self._pg_pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT DISTINCT symbol FROM stock_bars_daily WHERE symbol = ANY($1::text[])",
+                        norm_symbols,
+                    )
+                    return {str(r[0]) for r in rows}
+        except Exception as e:
+            logger.warning("Could not query stored daily symbols: %s", e)
+            return set()
+
+    async def upsert_harvester_progress(self, p: dict[str, Any]) -> None:
+        """Upsert current progress state of a harvester run."""
+        try:
+            if self.settings.is_sqlite:
+                assert self._sqlite_conn is not None
+                sql = """
+                INSERT INTO harvester_progress (
+                    dataset, worker_name, total_tickers, tickers_done, total_days,
+                    current_ticker, current_trading_day, completed_units, total_units,
+                    pct_complete, pct_remaining, rate_per_second, elapsed_seconds,
+                    eta_display, upserted_records, errors_count, status, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dataset) DO UPDATE SET
+                    worker_name=excluded.worker_name,
+                    total_tickers=excluded.total_tickers,
+                    tickers_done=excluded.tickers_done,
+                    total_days=excluded.total_days,
+                    current_ticker=excluded.current_ticker,
+                    current_trading_day=excluded.current_trading_day,
+                    completed_units=excluded.completed_units,
+                    total_units=excluded.total_units,
+                    pct_complete=excluded.pct_complete,
+                    pct_remaining=excluded.pct_remaining,
+                    rate_per_second=excluded.rate_per_second,
+                    elapsed_seconds=excluded.elapsed_seconds,
+                    eta_display=excluded.eta_display,
+                    upserted_records=excluded.upserted_records,
+                    errors_count=excluded.errors_count,
+                    status=excluded.status,
+                    updated_at=excluded.updated_at
+                """
+                await self._sqlite_conn.execute(
+                    sql,
+                    (
+                        p.get("dataset", "options"),
+                        p.get("worker_name", "alphavantage"),
+                        p.get("total_tickers", 0),
+                        p.get("tickers_done", 0),
+                        p.get("total_days", 0),
+                        p.get("current_ticker", ""),
+                        p.get("current_trading_day", ""),
+                        p.get("completed_units", 0),
+                        p.get("total_units", 0),
+                        p.get("pct_complete", 0.0),
+                        p.get("pct_remaining", 0.0),
+                        p.get("rate", 0.0),
+                        p.get("elapsed_seconds", 0.0),
+                        p.get("eta_display", "Estimating..."),
+                        p.get("records_upserted", 0),
+                        p.get("errors_count", 0),
+                        p.get("status", "running"),
+                        p.get("updated_at", datetime.now(UTC).isoformat()),
+                    ),
+                )
+                await self._sqlite_conn.commit()
+            else:
+                assert self._pg_pool is not None
+                sql = """
+                INSERT INTO harvester_progress (
+                    dataset, worker_name, total_tickers, tickers_done, total_days,
+                    current_ticker, current_trading_day, completed_units, total_units,
+                    pct_complete, pct_remaining, rate_per_second, elapsed_seconds,
+                    eta_display, upserted_records, errors_count, status, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                ON CONFLICT(dataset) DO UPDATE SET
+                    worker_name=EXCLUDED.worker_name,
+                    total_tickers=EXCLUDED.total_tickers,
+                    tickers_done=EXCLUDED.tickers_done,
+                    total_days=EXCLUDED.total_days,
+                    current_ticker=EXCLUDED.current_ticker,
+                    current_trading_day=EXCLUDED.current_trading_day,
+                    completed_units=EXCLUDED.completed_units,
+                    total_units=EXCLUDED.total_units,
+                    pct_complete=EXCLUDED.pct_complete,
+                    pct_remaining=EXCLUDED.pct_remaining,
+                    rate_per_second=EXCLUDED.rate_per_second,
+                    elapsed_seconds=EXCLUDED.elapsed_seconds,
+                    eta_display=EXCLUDED.eta_display,
+                    upserted_records=EXCLUDED.upserted_records,
+                    errors_count=EXCLUDED.errors_count,
+                    status=EXCLUDED.status,
+                    updated_at=EXCLUDED.updated_at
+                """
+                async with self._pg_pool.acquire() as conn:
+                    await conn.execute(
+                        sql,
+                        p.get("dataset", "options"),
+                        p.get("worker_name", "alphavantage"),
+                        p.get("total_tickers", 0),
+                        p.get("tickers_done", 0),
+                        p.get("total_days", 0),
+                        p.get("current_ticker", ""),
+                        p.get("current_trading_day", ""),
+                        p.get("completed_units", 0),
+                        p.get("total_units", 0),
+                        p.get("pct_complete", 0.0),
+                        p.get("pct_remaining", 0.0),
+                        p.get("rate", 0.0),
+                        p.get("elapsed_seconds", 0.0),
+                        p.get("eta_display", "Estimating..."),
+                        p.get("records_upserted", 0),
+                        p.get("errors_count", 0),
+                        p.get("status", "running"),
+                        datetime.now(UTC),
+                    )
+        except Exception as e:
+            logger.debug("Failed to upsert harvester progress in db: %s", e)
+
+    async def get_harvester_progress(self, dataset: str | None = None) -> list[dict[str, Any]]:
+        """Retrieve latest harvester progress state(s) from database."""
+        try:
+            if self.settings.is_sqlite:
+                assert self._sqlite_conn is not None
+                if dataset:
+                    cur = await self._sqlite_conn.execute(
+                        "SELECT * FROM harvester_progress WHERE dataset = ?", (dataset,)
+                    )
+                else:
+                    cur = await self._sqlite_conn.execute("SELECT * FROM harvester_progress ORDER BY updated_at DESC")
+                cols = [desc[0] for desc in cur.description]
+                rows = await cur.fetchall()
+                return [dict(zip(cols, r, strict=False)) for r in rows]
+            else:
+                assert self._pg_pool is not None
+                async with self._pg_pool.acquire() as conn:
+                    if dataset:
+                        rows = await conn.fetch("SELECT * FROM harvester_progress WHERE dataset = $1", dataset)
+                    else:
+                        rows = await conn.fetch("SELECT * FROM harvester_progress ORDER BY updated_at DESC")
+                    res = []
+                    for r in rows:
+                        d = dict(r)
+                        if "updated_at" in d and hasattr(d["updated_at"], "isoformat"):
+                            d["updated_at"] = d["updated_at"].isoformat()
+                        res.append(d)
+                    return res
+        except Exception:
+            return []
+
+    # The tables a harvest fills. A row in any of them says this file is
+    # somebody's store rather than a mock run's scratch file — connect()
+    # creates the schema, so the file existing proves nothing.
+    _HARVEST_EVIDENCE = ("options_chains_eod", "stock_bars_daily", "stock_bars_intraday", "listing_status")
+
+    async def _holds_harvested_rows(self) -> bool:
+        """True when this database already holds harvested rows."""
+        assert self._sqlite_conn is not None
+        for table in self._HARVEST_EVIDENCE:
+            try:
+                async with self._sqlite_conn.execute(f"SELECT 1 FROM {table} LIMIT 1") as cur:
+                    if await cur.fetchone():
+                        return True
+            except Exception:
+                continue  # absent table is no evidence either way
+        return False
+
     async def mark_mock_written(self) -> None:
-        """Stamp the open SQLite database as written by a mock run."""
+        """Stamp the open SQLite database as written by a mock run.
+
+        REFUSES A FILE THAT ALREADY HOLDS A HARVEST. The stamp is what sync-pg
+        reads to refuse a database, so stamping somebody's store does not just
+        add fabricated rows to it — it blocks every future sync of the real
+        ones until the pragma is cleared by hand. Three mock bars reached the
+        real store this way on 16 Sep 2026 (SPY on Labor Day, a Saturday and a
+        Sunday, at 456-464 against a real 757-774); the file escaped the stamp
+        only because the stamp did not exist yet.
+
+        A file with no harvested rows is the mock run's own: connect() has
+        created the schema by the time this is called, so emptiness is judged
+        by rows and not by the file.
+        """
         if not self.settings.is_sqlite:
             raise RuntimeError("Mock runs never write to PostgreSQL.")
         if not self.is_connected:
             await self.connect()
         assert self._sqlite_conn is not None
+        if not sqlite_file_is_mock(self.sqlite_path) and await self._holds_harvested_rows():
+            raise MockWriteRefusedError(
+                f"{self.sqlite_path} already holds harvested rows and no mock run has stamped it. "
+                "A mock run would add fabricated rows and stamp the file, which stops sync-pg "
+                "taking any of it. Point --db-url at a new file, or omit it to use the mock database."
+            )
         await self._sqlite_conn.execute(f"PRAGMA application_id = {MOCK_APPLICATION_ID}")
         await self._sqlite_conn.commit()
 

@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Intraday Pattern Scanner & Quant Screener | GreeksView EdgeMatrix™</title>
+  <meta name="description" content="Screen 5,300+ stocks for audited 5-minute intraday patterns. Discover the 88.6% Anchor Rule, 60m Initial Balance breakouts, and institutional volume climaxes. Subscribe to unlock all tickers.">
+  <style>
+    :root {
+      --bg-primary: #050811;
+      --bg-secondary: #0a0f1d;
+      --bg-card: #0f172a;
+      --bg-card-hover: #162038;
+      --border-subtle: #1e293b;
+      --border-focus: #0284c7;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent-cyan: #38bdf8;
+      --accent-green: #22c55e;
+      --accent-purple: #a855f7;
+      --accent-orange: #f97316;
+      --accent-yellow: #f59e0b;
+      --accent-red: #ef4444;
+      --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent-cyan); text-decoration: none; }
+
+    /* Top Trust Bar */
+    .top-banner {
+      background: linear-gradient(90deg, #0284c7 0%, #1e1b4b 100%);
+      padding: 6px 16px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .badge-live {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      background: var(--accent-green);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--accent-green);
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    /* Header Nav */
+    header {
+      background: rgba(10, 15, 29, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo-badge {
+      background: linear-gradient(135deg, #0369a1, #0284c7);
+      color: #fff;
+      font-family: var(--font-mono);
+      font-weight: 800;
+      font-size: 11px;
+      letter-spacing: 1px;
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+    .logo-title {
+      font-weight: 800;
+      font-size: 15px;
+      letter-spacing: 0.5px;
+      color: #fff;
+    }
+    .nav-cta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .btn-header {
+      background: var(--accent-green);
+      color: #050811;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 12px;
+      padding: 8px 16px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-header:hover {
+      background: #16a34a;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(34, 197, 94, 0.4);
+    }
+
+    /* Hero Section */
+    .hero {
+      padding: 60px 24px 40px;
+      max-width: 1200px;
+      margin: 0 auto;
+      text-align: center;
+    }
+    .eyebrow-tag {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent-cyan);
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-bottom: 18px;
+      letter-spacing: 0.5px;
+    }
+    .hero h1 {
+      font-size: 42px;
+      font-weight: 800;
+      line-height: 1.15;
+      color: #fff;
+      margin-bottom: 16px;
+      letter-spacing: -0.5px;
+    }
+    .hero h1 span {
+      background: linear-gradient(90deg, #38bdf8, #22c55e);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hero p {
+      font-size: 17px;
+      color: var(--text-muted);
+      max-width: 820px;
+      margin: 0 auto 30px;
+      line-height: 1.6;
+    }
+    .hero-cta-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    .btn-primary-cta {
+      background: linear-gradient(135deg, #22c55e, #16a34a);
+      color: #050811;
+      font-weight: 800;
+      font-size: 16px;
+      font-family: var(--font-mono);
+      padding: 16px 36px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.2s;
+      box-shadow: 0 4px 20px rgba(34, 197, 94, 0.35);
+    }
+    .btn-primary-cta:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px rgba(34, 197, 94, 0.5);
+    }
+    .guarantee-text {
+      font-size: 12px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+
+    /* Metric Ribbon */
+    .metric-ribbon {
+      max-width: 1200px;
+      margin: 20px auto 40px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      padding: 0 24px;
+    }
+    .metric-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 20px;
+      text-align: left;
+      position: relative;
+      overflow: hidden;
+    }
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+    }
+    .metric-card.cyan::before { background: var(--accent-cyan); }
+    .metric-card.green::before { background: var(--accent-green); }
+    .metric-card.purple::before { background: var(--accent-purple); }
+    .metric-card.orange::before { background: var(--accent-orange); }
+    .metric-num {
+      font-size: 32px;
+      font-weight: 800;
+      font-family: var(--font-mono);
+      color: #fff;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+    .metric-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+      margin-bottom: 4px;
+    }
+    .metric-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    /* Screener Interface Preview */
+    .preview-section {
+      max-width: 1200px;
+      margin: 0 auto 60px;
+      padding: 0 24px;
+    }
+    .panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .panel-header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 14px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .panel-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-mono);
+    }
+    .panel-tag {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent-cyan);
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .screener-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-family: var(--font-mono);
+    }
+    .screener-table th {
+      background: #090e1a;
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 11px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .screener-table td {
+      padding: 14px 16px;
+      border-bottom: 1px solid #131d31;
+    }
+    .screener-table tr:hover {
+      background: var(--bg-card-hover);
+    }
+    .locked-row {
+      filter: blur(3px);
+      opacity: 0.45;
+      user-select: none;
+      pointer-events: none;
+    }
+    .lock-overlay-cell {
+      position: relative;
+    }
+    .lock-pill {
+      background: rgba(245, 158, 11, 0.2);
+      border: 1px solid var(--accent-yellow);
+      color: var(--accent-yellow);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Conversion Gate Banner */
+    .gate-banner {
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.6) 0%, rgba(2, 6, 23, 0.95) 100%);
+      border: 1px solid var(--border-subtle);
+      border-top: none;
+      padding: 32px 24px;
+      text-align: center;
+    }
+    .gate-banner h3 {
+      font-size: 20px;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+    .gate-banner p {
+      font-size: 14px;
+      color: var(--text-muted);
+      max-width: 600px;
+      margin: 0 auto 20px;
+    }
+
+    /* Grid Features */
+    .feature-grid {
+      max-width: 1200px;
+      margin: 0 auto 60px;
+      padding: 0 24px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+    .feature-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 24px;
+    }
+    .feature-icon {
+      font-size: 24px;
+      margin-bottom: 14px;
+      display: inline-block;
+    }
+    .feature-box h4 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+    .feature-box p {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* Subscription Modal */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(8px);
+      z-index: 999;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-card {
+      background: #090e1a;
+      border: 1px solid #0284c7;
+      border-radius: 12px;
+      width: 90%;
+      max-width: 480px;
+      padding: 32px;
+      box-shadow: 0 20px 50px rgba(2, 132, 199, 0.35);
+      position: relative;
+    }
+    .modal-close {
+      position: absolute;
+      top: 14px; right: 14px;
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 20px;
+      cursor: pointer;
+    }
+    .modal-card h3 {
+      font-size: 22px;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 6px;
+    }
+    .modal-card p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+    }
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .input-field {
+      background: #020617;
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 12px 14px;
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+    .input-field:focus {
+      outline: none;
+      border-color: var(--accent-cyan);
+    }
+    .btn-modal-submit {
+      background: var(--accent-green);
+      color: #050811;
+      font-weight: 800;
+      font-family: var(--font-mono);
+      font-size: 15px;
+      padding: 14px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.2s;
+    }
+    .btn-modal-submit:hover { background: #16a34a; }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border-subtle);
+      padding: 40px 24px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+    .footer-links {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-bottom: 16px;
+      font-size: 12px;
+    }
+
+    @media (max-width: 768px) {
+      .metric-ribbon { grid-template-columns: 1fr 1fr; }
+      .feature-grid { grid-template-columns: 1fr; }
+      .hero h1 { font-size: 30px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Trust Bar -->
+  <div class="top-banner">
+    <div class="badge-live">
+      <span class="live-dot"></span>
+      INSTITUTIONAL QUANT SUITE &bull; 5,350 EQUITIES TRACKED
+    </div>
+    <div style="color: var(--accent-cyan); font-weight: 600;">
+      STOCK Act &amp; Alpha Vantage Native Feed
+    </div>
+  </div>
+
+  <!-- Header -->
+  <header>
+    <div class="logo-group">
+      <span class="logo-badge">GREEKSVIEW</span>
+      <span class="logo-title">Intraday EdgeMatrix™</span>
+    </div>
+    <div class="nav-cta">
+      <button class="btn-header" onclick="openSubscribeModal('Header Navigation')">Subscribe to View All Tickers</button>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="eyebrow-tag">01 // QUANTITATIVE PATTERN SCANNER &amp; SCREENER</div>
+    <h1>Institutional 5-Minute Pattern Scanner.<br><span>Quant-Verified Alpha, Zero Guesswork.</span></h1>
+    <p>
+      Stop trading lagging retail indicators. Screen 5,300+ equities for mathematically verified structural patterns: the 88.6% Anchor Rule, 60-minute Initial Balance clean breakouts, and relative volume climax shock reversals.
+    </p>
+    <div class="hero-cta-box">
+      <button class="btn-primary-cta" onclick="openSubscribeModal('Hero Primary CTA')">
+        Subscribe to View All 5,300+ Tickers &rarr;
+      </button>
+      <div class="guarantee-text">Full 14-Day Institutional Pass &bull; No Credit Card Required &bull; Instant Access</div>
+    </div>
+  </section>
+
+  <!-- Quantitative Metric Ribbon -->
+  <section class="metric-ribbon">
+    <div class="metric-card cyan">
+      <div class="metric-num">88.6%</div>
+      <div class="metric-label">Opening 45m Anchor Hold</div>
+      <div class="metric-sub">High or Low locked by 10:15 ET</div>
+    </div>
+    <div class="metric-card green">
+      <div class="metric-num">74.3%</div>
+      <div class="metric-label">60m IB Single-Side Trend</div>
+      <div class="metric-sub">Only 10.2% double-break chop</div>
+    </div>
+    <div class="metric-card purple">
+      <div class="metric-num">87.7%</div>
+      <div class="metric-label">Fair Value Gap Retest Rate</div>
+      <div class="metric-sub">84.0% support / resistance hold</div>
+    </div>
+    <div class="metric-card orange">
+      <div class="metric-num">88.1%</div>
+      <div class="metric-label">VWAP ±2.0σ Mean Reversion</div>
+      <div class="metric-sub">Average pullback: 35–50 min</div>
+    </div>
+  </section>
+
+  <!-- Live Screener Preview -->
+  <section class="preview-section">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>LIVE 5-MINUTE INTRADAY PATTERN SCREENER</span>
+          <span class="panel-tag">REAL-TIME EXECUTION QUEUE</span>
+        </div>
+        <div style="font-family: var(--font-mono); font-size: 11px; color: var(--accent-green);">
+          ● ENGINE ACTIVE (1,100 RPM PACER)
+        </div>
+      </div>
+
+      <table class="screener-table">
+        <thead>
+          <tr>
+            <th>SYMBOL</th>
+            <th>FIRST 45m ANCHOR</th>
+            <th>60m INITIAL BALANCE</th>
+            <th>TOD WIN % (09:30–10:30)</th>
+            <th>FVG STATUS</th>
+            <th>STAT-ARB REVERSION</th>
+            <th>ACTION</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Unlocked Sample Row: AAPL -->
+          <tr style="background: rgba(56, 189, 248, 0.04);">
+            <td><b style="color: var(--accent-cyan); font-size: 13px;">AAPL</b> <span style="font-size: 10px; color: var(--text-dim);">(Unlocked)</span></td>
+            <td><span style="color: var(--accent-green); font-weight: 700;">88.6% Lock</span> <span style="font-size: 10px; color: var(--text-dim);">LOD $227.90</span></td>
+            <td><span style="color: var(--accent-cyan); font-weight: 700;">Bull Break</span> <span style="font-size: 10px; color: var(--text-dim);">$231.15 Target</span></td>
+            <td><span style="color: var(--accent-yellow); font-weight: 700;">58.4% Green</span></td>
+            <td><span style="color: var(--accent-green);">Holding ($0.30)</span></td>
+            <td><span style="color: var(--accent-purple);">88.1% Pullback</span></td>
+            <td><a href="aapl-intraday-patterns.html" style="background: rgba(56, 189, 248, 0.2); padding: 4px 8px; border-radius: 4px; font-size: 11px;">View AAPL &rarr;</a></td>
+          </tr>
+
+          <!-- Locked Rows with Blur & Subscription CTA Trigger -->
+          <tr class="locked-row">
+            <td><b>NVDA</b></td>
+            <td>89.4% Lock</td>
+            <td>Bearish Breakout</td>
+            <td>61.2% Green</td>
+            <td>Filled ($1.45)</td>
+            <td>+2.1σ Extreme</td>
+            <td>Locked</td>
+          </tr>
+          <tr class="locked-row">
+            <td><b>SPY</b></td>
+            <td>91.2% Lock</td>
+            <td>Inside Range Squeeze</td>
+            <td>54.0% Green</td>
+            <td>Unmitigated</td>
+            <td>VWAP Touch</td>
+            <td>Locked</td>
+          </tr>
+          <tr class="locked-row">
+            <td><b>TSLA</b></td>
+            <td>86.1% Lock</td>
+            <td>1.5x IB Extension</td>
+            <td>59.8% Green</td>
+            <td>Retested &amp; Held</td>
+            <td>-2.4σ Reversion</td>
+            <td>Locked</td>
+          </tr>
+          <tr class="locked-row">
+            <td><b>QQQ</b></td>
+            <td>90.5% Lock</td>
+            <td>Bullish Breakout</td>
+            <td>56.3% Green</td>
+            <td>Forming Void</td>
+            <td>Midline Flat</td>
+            <td>Locked</td>
+          </tr>
+          <tr class="locked-row">
+            <td><b>MSFT</b></td>
+            <td>87.9% Lock</td>
+            <td>Consolidation</td>
+            <td>52.1% Green</td>
+            <td>Tested ($0.85)</td>
+            <td>+1.8σ Mean</td>
+            <td>Locked</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Gate Overlay -->
+      <div class="gate-banner">
+        <h3>5,349 Additional Tickers Currently Screened</h3>
+        <p>Unlock real-time 5-minute pattern detection, anchor stop-loss boundaries, and daily breakout projections for the entire optionable equities universe.</p>
+        <button class="btn-primary-cta" onclick="openSubscribeModal('Screener Table Gate')">
+          Subscribe to View All Tickers &rarr;
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Feature Grid -->
+  <section class="feature-grid">
+    <div class="feature-box">
+      <div class="feature-icon">⚓</div>
+      <h4>The 88.6% Anchor Rule</h4>
+      <p>By 10:15 AM ET, Apple and leading equities lock in their session High or Low in 88.6% of sessions. Know the structural invalidation extreme before taking directional risk.</p>
+    </div>
+    <div class="feature-box">
+      <div class="feature-icon">📊</div>
+      <h4>60-Min Initial Balance (IB)</h4>
+      <p>Clean single-direction trends follow 74.3% of Initial Balance breakouts. Stop getting caught in midday chop and target audited 1.5x range expansion levels.</p>
+    </div>
+    <div class="feature-box">
+      <div class="feature-icon">⚡</div>
+      <h4>RVOL Climax Shock Filter</h4>
+      <p>When 5-minute volume exceeds 2.5x the time-of-day median, exhaustion wicks precede sharp reversals in 50.7% of instances. Identify liquidity dumps before they happen.</p>
+    </div>
+  </section>
+
+  <!-- Subscription Modal -->
+  <div class="modal-backdrop" id="subModal">
+    <div class="modal-card">
+      <button class="modal-close" onclick="closeSubscribeModal()">&times;</button>
+      <div style="font-family: var(--font-mono); font-size: 11px; color: var(--accent-cyan); font-weight: 700; margin-bottom: 6px;">
+        GREEKSVIEW EDGEMATRIX™ DESK PASS
+      </div>
+      <h3>Subscribe to View All Tickers</h3>
+      <p>Gain instant access to real-time 5-minute pattern detection, morning playbook calculations, and 0DTE options matrices across 5,300+ symbols.</p>
+      
+      <div class="input-group">
+        <input type="text" class="input-field" placeholder="Work / Trading Email" id="subEmail">
+        <select class="input-field" id="subRole">
+          <option value="retail">Independent Active Day Trader</option>
+          <option value="prop">Proprietary Desk Trader</option>
+          <option value="quant">Quantitative Fund / Researcher</option>
+          <option value="0dte">0DTE Options Specialist</option>
+        </select>
+      </div>
+
+      <button class="btn-modal-submit" onclick="submitSubscription()">Start 14-Day Free Institutional Trial &rarr;</button>
+      <div style="text-align: center; margin-top: 10px; font-size: 11px; color: var(--text-dim); font-family: var(--font-mono);">
+        No commitment &bull; Instant activation &bull; Zero vendor latency
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-links">
+      <a href="edgematrix-pattern-detection.html" style="color: var(--accent-cyan);">01. Pattern Detection</a> &bull;
+      <a href="edgematrix-gap-breakout.html">02. Gap &amp; Breakout</a> &bull;
+      <a href="edgematrix-options-derivatives.html">03. Options &amp; Derivatives</a> &bull;
+      <a href="edgematrix-smartmoney-statarb.html">04. Smart Money &amp; Stat-Arb</a>
+    </div>
+    <div>&copy; 2026 GreeksView Institutional Analytics. Derived under the STOCK Act &amp; SEC Public Financial Disclosures.</div>
+    <div style="margin-top: 6px; color: var(--text-dim);">Financial analytics for informational and algorithmic trading execution only. Not personal investment advice.</div>
+  </footer>
+
+  <script>
+    function openSubscribeModal(source) {
+      console.log("Subscription opened from:", source);
+      document.getElementById('subModal').style.display = 'flex';
+    }
+    function closeSubscribeModal() {
+      document.getElementById('subModal').style.display = 'none';
+    }
+    function submitSubscription() {
+      const email = document.getElementById('subEmail').value;
+      if (!email || !email.includes('@')) {
+        alert("Please enter a valid work or trading email address.");
+        return;
+      }
+      alert(`Welcome to GreeksView EdgeMatrix™! Your 14-day institutional trial for ${email} has been provisioned.`);
+      closeSubscribeModal();
+    }
+  </script>
+</body>
+</html>

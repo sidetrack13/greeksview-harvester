@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fair Value Gap Scanner & VWAP Stat-Arb | GreeksView EdgeMatrix™</title>
+  <meta name="description" content="Trade institutional order flow with audited mathematics. 87.7% Fair Value Gap (FVG) retest rate, 88.1% VWAP ±2.0σ mean reversion, and PDH/PDL liquidity sweeps. Subscribe to view all tickers.">
+  <style>
+    :root {
+      --bg-primary: #050811;
+      --bg-secondary: #0a0f1d;
+      --bg-card: #0f172a;
+      --bg-card-hover: #162038;
+      --border-subtle: #1e293b;
+      --border-focus: #0284c7;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent-cyan: #38bdf8;
+      --accent-green: #22c55e;
+      --accent-purple: #a855f7;
+      --accent-orange: #f97316;
+      --accent-yellow: #f59e0b;
+      --accent-red: #ef4444;
+      --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent-cyan); text-decoration: none; }
+
+    .top-banner {
+      background: linear-gradient(90deg, #0284c7 0%, #1e1b4b 100%);
+      padding: 6px 16px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .badge-live {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      background: var(--accent-cyan);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--accent-cyan);
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    header {
+      background: rgba(10, 15, 29, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo-group { display: flex; align-items: center; gap: 12px; }
+    .logo-badge {
+      background: linear-gradient(135deg, #0369a1, #0284c7);
+      color: #fff;
+      font-family: var(--font-mono);
+      font-weight: 800;
+      font-size: 11px;
+      letter-spacing: 1px;
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+    .logo-title { font-weight: 800; font-size: 15px; letter-spacing: 0.5px; color: #fff; }
+    .btn-header {
+      background: var(--accent-cyan);
+      color: #050811;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 12px;
+      padding: 8px 16px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-header:hover {
+      background: #0284c7;
+      color: #fff;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);
+    }
+
+    .hero {
+      padding: 60px 24px 30px;
+      max-width: 1200px;
+      margin: 0 auto;
+      text-align: center;
+    }
+    .eyebrow-tag {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent-cyan);
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-bottom: 18px;
+    }
+    .hero h1 {
+      font-size: 42px;
+      font-weight: 800;
+      line-height: 1.15;
+      color: #fff;
+      margin-bottom: 16px;
+    }
+    .hero h1 span {
+      background: linear-gradient(90deg, #38bdf8, #a855f7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hero p {
+      font-size: 17px;
+      color: var(--text-muted);
+      max-width: 820px;
+      margin: 0 auto 30px;
+      line-height: 1.6;
+    }
+
+    /* Live Stat-Arb Simulator */
+    .sim-container {
+      max-width: 1100px;
+      margin: 0 auto 50px;
+      padding: 0 24px;
+    }
+    .sim-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    .sim-header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .sim-body {
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      gap: 24px;
+    }
+    .sim-inputs {
+      background: #090e1a;
+      border: 1px solid #162038;
+      border-radius: 8px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .sim-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .sim-row label {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .sim-row input {
+      width: 130px;
+      background: #020617;
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      padding: 8px 10px;
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      text-align: right;
+    }
+    .sim-row input:focus {
+      outline: none;
+      border-color: var(--accent-cyan);
+    }
+
+    .sim-outputs {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .stat-card {
+      background: #090e1a;
+      border: 1px solid #162038;
+      border-radius: 6px;
+      padding: 14px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .stat-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .stat-val {
+      font-family: var(--font-mono);
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    /* Metric Ribbon */
+    .metric-ribbon {
+      max-width: 1200px;
+      margin: 0 auto 50px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      padding: 0 24px;
+    }
+    .metric-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 20px;
+      text-align: left;
+    }
+    .metric-num {
+      font-size: 32px;
+      font-weight: 800;
+      font-family: var(--font-mono);
+      color: #fff;
+      margin-bottom: 6px;
+    }
+
+    /* CTA Section */
+    .cta-banner-section {
+      background: linear-gradient(180deg, #090e1a 0%, #020617 100%);
+      border-top: 1px solid var(--border-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 60px 24px;
+      text-align: center;
+    }
+    .btn-primary-cta {
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      color: #fff;
+      font-weight: 800;
+      font-size: 16px;
+      font-family: var(--font-mono);
+      padding: 16px 36px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 4px 20px rgba(2, 132, 199, 0.35);
+      transition: all 0.2s;
+    }
+    .btn-primary-cta:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px rgba(2, 132, 199, 0.5);
+    }
+
+    /* Modal */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(8px);
+      z-index: 999;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-card {
+      background: #090e1a;
+      border: 1px solid var(--accent-cyan);
+      border-radius: 12px;
+      width: 90%;
+      max-width: 480px;
+      padding: 32px;
+      position: relative;
+    }
+    .modal-close {
+      position: absolute;
+      top: 14px; right: 14px;
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 20px;
+      cursor: pointer;
+    }
+    .input-field {
+      background: #020617;
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 12px 14px;
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      width: 100%;
+      margin-bottom: 12px;
+    }
+
+    footer {
+      border-top: 1px solid var(--border-subtle);
+      padding: 40px 24px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+    .footer-links {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Banner -->
+  <div class="top-banner">
+    <div class="badge-live">
+      <span class="live-dot"></span>
+      SMART MONEY &amp; STAT-ARB ENGINE &bull; 2,570 AUDITED FVGs
+    </div>
+    <div style="color: var(--accent-cyan); font-weight: 600;">
+      STOCK Act &amp; Alpha Vantage Native Pipeline
+    </div>
+  </div>
+
+  <!-- Header -->
+  <header>
+    <div class="logo-group">
+      <span class="logo-badge">GREEKSVIEW</span>
+      <span class="logo-title">EdgeMatrix™ // Smart Money &amp; Stat-Arb</span>
+    </div>
+    <div>
+      <button class="btn-header" onclick="openSubscribeModal('Header Nav')">Subscribe to View All Tickers</button>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="eyebrow-tag">04 // FAIR VALUE GAPS &amp; STATISTICAL ARBITRAGE</div>
+    <h1>Fair Value Gap Scanner &amp; VWAP Stat-Arb.<br><span>Trade Institutional Order Flow with Pure Math.</span></h1>
+    <p>
+      87.7% of 5-minute Fair Value Gaps retest. 88.1% of VWAP &plusmn;2.0&sigma; deviations pull back to the mean. Stop drawing subjective trendlines and trade audited algorithmic liquidity footprints.
+    </p>
+  </section>
+
+  <!-- Live VWAP Deviation & FVG Simulator -->
+  <section class="sim-container">
+    <div class="sim-panel">
+      <div class="sim-header">
+        <h3 style="color: #fff; font-size: 14px; font-family: var(--font-mono);">
+          <span>📐 LIVE VWAP Z-SCORE &amp; FVG LIQUIDITY CALCULATOR</span>
+        </h3>
+        <span style="font-family: var(--font-mono); font-size: 11px; color: var(--accent-cyan);">TRY WITH LIVE VALUES</span>
+      </div>
+      <div class="sim-body">
+        <!-- Inputs -->
+        <div class="sim-inputs">
+          <div style="font-size: 11px; font-weight: 700; color: var(--accent-cyan); font-family: var(--font-mono);">
+            TICKER PARAMETERS ($)
+          </div>
+          <div class="sim-row">
+            <label>Current Price ($):</label>
+            <input type="number" id="inPrice" value="229.40" step="0.10" oninput="recalc()">
+          </div>
+          <div class="sim-row">
+            <label>Session VWAP ($):</label>
+            <input type="number" id="inVwap" value="228.15" step="0.10" oninput="recalc()">
+          </div>
+          <div class="sim-row">
+            <label>Session StdDev &sigma; ($):</label>
+            <input type="number" id="inSigma" value="0.55" step="0.05" oninput="recalc()">
+          </div>
+          <div class="sim-row">
+            <label>Nearest 5m FVG ($):</label>
+            <input type="number" id="inFvg" value="228.60" step="0.10" oninput="recalc()">
+          </div>
+        </div>
+
+        <!-- Outputs -->
+        <div class="sim-outputs">
+          <div class="stat-card">
+            <div>
+              <div class="stat-title">VWAP Standard Deviation Z-Score</div>
+              <div style="font-size: 11px; color: var(--text-dim);" id="zScoreDetail">+2.27&sigma; Upper Band Stretch</div>
+            </div>
+            <div class="stat-val" style="color: var(--accent-purple);" id="zScoreVal">+2.27&sigma;</div>
+          </div>
+
+          <div class="stat-card">
+            <div>
+              <div class="stat-title">Mean Reversion Expectancy</div>
+              <div style="font-size: 11px; color: var(--text-dim);">Historical win rate back to VWAP</div>
+            </div>
+            <div class="stat-val" style="color: var(--accent-green);" id="revProbVal">88.1% Reversion Prob</div>
+          </div>
+
+          <div class="stat-card">
+            <div>
+              <div class="stat-title">Fair Value Gap Retest Level</div>
+              <div style="font-size: 11px; color: var(--text-dim);">84.0% S/R Hold Barrier on 50% Void</div>
+            </div>
+            <div class="stat-val" style="color: var(--accent-cyan);" id="fvgTargetVal">$228.60 (Resting Limit)</div>
+          </div>
+
+          <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 6px; padding: 14px; font-size: 13px; line-height: 1.5;" id="simVerdict">
+            <b>Desk Directive:</b> STAT-ARB EXTREME &bull; Price is extended +2.27&sigma; above VWAP. In 88.1% of cases, price reverts back to touch VWAP ($228.15) before 16:00 ET. Stop-loss: 2 closes above +2.5&sigma; ($229.53).
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Metric Ribbon -->
+  <section class="metric-ribbon">
+    <div class="metric-card">
+      <div class="metric-num" style="color: var(--accent-cyan);">2,570</div>
+      <div style="font-size: 13px; font-weight: 600; color: #fff;">Audited 5-Min FVGs</div>
+      <div style="font-size: 11px; color: var(--text-dim); font-family: var(--font-mono);">Imbalance voids &ge; $0.08</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-num" style="color: var(--accent-green);">87.7%</div>
+      <div style="font-size: 13px; font-weight: 600; color: #fff;">FVG Retest Rate</div>
+      <div style="font-size: 11px; color: var(--text-dim); font-family: var(--font-mono);">Price rebalances void</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-num" style="color: var(--accent-purple);">88.1%</div>
+      <div style="font-size: 13px; font-weight: 600; color: #fff;">VWAP &plusmn;2&sigma; Reversion</div>
+      <div style="font-size: 11px; color: var(--text-dim); font-family: var(--font-mono);">193 of 219 historical sessions</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-num" style="color: var(--accent-orange);">50/50</div>
+      <div style="font-size: 13px; font-weight: 600; color: #fff;">PDH/PDL Sweep Trap</div>
+      <div style="font-size: 11px; color: var(--text-dim); font-family: var(--font-mono);">Requires 2-bar confirmation</div>
+    </div>
+  </section>
+
+  <!-- Conversion Section -->
+  <section class="cta-banner-section">
+    <h2 style="font-size: 28px; font-weight: 800; color: #fff; margin-bottom: 12px;">
+      Subscribe to Scan Smart Money Levels Across 5,300+ Stocks
+    </h2>
+    <p style="font-size: 15px; color: var(--text-muted); max-width: 650px; margin: 0 auto 28px;">
+      Gain real-time Fair Value Gap alerts, VWAP standard deviation bands, and liquidity sweep detection for all optionable equities.
+    </p>
+    <button class="btn-primary-cta" onclick="openSubscribeModal('Main CTA')">
+      Subscribe to View All Tickers &rarr;
+    </button>
+  </section>
+
+  <!-- Modal -->
+  <div class="modal-backdrop" id="subModal">
+    <div class="modal-card">
+      <button class="modal-close" onclick="closeSubscribeModal()">&times;</button>
+      <div style="font-family: var(--font-mono); font-size: 11px; color: var(--accent-cyan); font-weight: 700; margin-bottom: 6px;">
+        GREEKSVIEW EDGEMATRIX™ SMART MONEY DESK
+      </div>
+      <h3 style="color: #fff; font-size: 20px; font-weight: 800; margin-bottom: 8px;">Subscribe to View All Tickers</h3>
+      <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 20px;">
+        Unlock automated Fair Value Gap recognition, VWAP statistical arbitrage bands, and liquidity sweep filters across 5,300+ symbols.
+      </p>
+      <input type="text" class="input-field" placeholder="Trading / Firm Email" id="modalEmail">
+      <button class="btn-primary-cta" style="width: 100%; justify-content: center;" onclick="submitSub()">
+        Unlock All Tickers (14-Day Free Pass) &rarr;
+      </button>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-links">
+      <a href="edgematrix-pattern-detection.html">01. Pattern Detection</a> &bull;
+      <a href="edgematrix-gap-breakout.html">02. Gap &amp; Breakout</a> &bull;
+      <a href="edgematrix-options-derivatives.html">03. Options &amp; Derivatives</a> &bull;
+      <a href="edgematrix-smartmoney-statarb.html" style="color: var(--accent-cyan);">04. Smart Money &amp; Stat-Arb</a>
+    </div>
+    <div>&copy; 2026 GreeksView Institutional Analytics. Derived under the STOCK Act &amp; SEC Public Financial Disclosures.</div>
+  </footer>
+
+  <script>
+    function recalc() {
+      const p = parseFloat(document.getElementById('inPrice').value) || 0;
+      const v = parseFloat(document.getElementById('inVwap').value) || 0;
+      const sig = parseFloat(document.getElementById('inSigma').value) || 0.1;
+      const fvg = parseFloat(document.getElementById('inFvg').value) || 0;
+
+      if (v > 0 && sig > 0) {
+        const z = (p - v) / sig;
+        document.getElementById('zScoreVal').innerText = `${z >= 0 ? '+' : ''}${z.toFixed(2)}\u03C3`;
+        document.getElementById('zScoreDetail').innerText = `${Math.abs(z) >= 2.0 ? 'EXTREME STATISTICAL DISPLACEMENT' : 'Normal Session Range'}`;
+        document.getElementById('revProbVal').innerText = Math.abs(z) >= 2.0 ? "88.1% Reversion Prob" : "54.2% Float Rate";
+        document.getElementById('fvgTargetVal').innerText = `$${fvg.toFixed(2)} (Resting Limit)`;
+
+        const maxStop = (v + (2.5 * sig)).toFixed(2);
+        document.getElementById('simVerdict').innerHTML = `<b>Desk Directive:</b> ${Math.abs(z) >= 2.0 ? 'STAT-ARB EXTREME' : 'WITHIN NORMAL BANDS'} \u2022 Price is extended ${z >= 0 ? '+' : ''}${z.toFixed(2)}\u03C3 from VWAP. ${Math.abs(z) >= 2.0 ? `In 88.1% of cases, price reverts to touch VWAP ($${v.toFixed(2)}) before 16:00 ET. Stop-loss: 2 closes beyond 2.5\u03C3 ($${maxStop}).` : `Look for test of nearest 50% FVG at $${fvg.toFixed(2)} for directional re-entry.`}`;
+      }
+    }
+
+    function openSubscribeModal(src) {
+      document.getElementById('subModal').style.display = 'flex';
+    }
+    function closeSubscribeModal() {
+      document.getElementById('subModal').style.display = 'none';
+    }
+    function submitSub() {
+      const email = document.getElementById('modalEmail').value;
+      if (!email || !email.includes('@')) {
+        alert("Please enter a valid email.");
+        return;
+      }
+      alert(`Success! 14-day smart money trial unlocked for ${email}.`);
+      closeSubscribeModal();
+    }
+    window.addEventListener('DOMContentLoaded', recalc);
+  </script>
+</body>
+</html>

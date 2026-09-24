@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     # must set ALPHAVANTAGE_RPM / ALPHAVANTAGE_MAX_PER_SECOND so that the harvester
     # plus the product's worst case stays inside the key's budget. Never raise them
     # to the licence ceiling. The pacer enforces both limits (pacer.py).
-    alphavantage_max_per_second: int = 25
+    alphavantage_max_per_second: int = 20
     alphavantage_rpm: int = 1100
     alphavantage_cooldown_ms: int = 2000
     # HOW MANY CHAIN FETCHES ARE IN FLIGHT AT ONCE (options backfill only).
