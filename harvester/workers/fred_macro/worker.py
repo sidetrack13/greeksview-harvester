@@ -63,7 +63,7 @@ class FredMacroWorker(BaseWorker):
         series_ids: list[str] | None = None,
         limit_points_per_series: int | None = None,
         use_mock: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> WorkerResult:
         """Execute FRED macro economic data ingestion pass."""
         start_time = time.time()

@@ -725,11 +725,11 @@ class DatabaseManager:
         if self.settings.is_sqlite:
             assert self._sqlite_conn is not None
             async with self._sqlite_conn.execute(query, args) as cursor:
-                return await cursor.fetchall()
+                return list(await cursor.fetchall())
         else:
             assert self._pg_pool is not None
             async with self._pg_pool.acquire() as conn:
-                return await conn.fetch(query, *args)
+                return list(await conn.fetch(query, *args))
 
     async def fetchval(self, query: str, *args: Any) -> Any:
         """Fetch single value."""
@@ -1464,7 +1464,7 @@ class DatabaseManager:
                 split_coefficient = excluded.split_coefficient,
                 updated_at = datetime('now')
             """
-            batch = []
+            batch: list[tuple[Any, ...]] = []
             for r in records:
                 try:
                     batch.append(
@@ -1549,7 +1549,7 @@ class DatabaseManager:
                 close = excluded.close,
                 volume = excluded.volume
             """
-            batch = []
+            batch: list[tuple[Any, ...]] = []
             for r in records:
                 try:
                     batch.append(
@@ -1636,7 +1636,7 @@ class DatabaseManager:
                 vega = excluded.vega,
                 rho = excluded.rho
             """
-            batch = []
+            batch: list[tuple[Any, ...]] = []
             for r in records:
                 try:
                     batch.append(
@@ -1742,7 +1742,7 @@ class DatabaseManager:
                 data_json = excluded.data_json,
                 updated_at = datetime('now')
             """
-            batch = []
+            batch: list[tuple[Any, ...]] = []
             for r in records:
                 try:
                     batch.append(
@@ -1805,7 +1805,7 @@ class DatabaseManager:
                 payment_date = excluded.payment_date,
                 amount = excluded.amount
             """
-            batch = []
+            batch: list[tuple[Any, ...]] = []
             for r in records:
                 try:
                     batch.append(
@@ -1874,7 +1874,7 @@ class DatabaseManager:
             ON CONFLICT (symbol, effective_date) DO UPDATE SET
                 split_factor = excluded.split_factor
             """
-            batch = []
+            batch: list[tuple[Any, ...]] = []
             for r in records:
                 try:
                     batch.append(
@@ -1938,7 +1938,7 @@ class DatabaseManager:
                 sectors_json = excluded.sectors_json,
                 updated_at = datetime('now')
             """
-            batch = []
+            batch: list[tuple[Any, ...]] = []
             for r in records:
                 try:
                     batch.append(
@@ -2013,7 +2013,7 @@ class DatabaseManager:
                 status = excluded.status,
                 updated_at = datetime('now')
             """
-            batch = []
+            batch: list[tuple[Any, ...]] = []
             for r in records:
                 try:
                     batch.append(
@@ -2493,7 +2493,7 @@ class DatabaseManager:
             assert self._pg_pool is not None
             query = f"SELECT {', '.join(columns)} FROM options_chains_eod"
             conditions = []
-            pg_params = []
+            pg_params: list[Any] = []
             idx = 1
             if symbol:
                 conditions.append(f"symbol = ${idx}")

@@ -5,8 +5,7 @@
 # no checks on any pull request, so "once CI passes" had never been a
 # condition anything could meet.
 #
-# Ruff, ruff format and pytest all pass on main today and block here. Mypy
-# does not — see the step below.
+# Ruff, ruff format, mypy and pytest all pass on main and all block here.
 name: CI
 
 on:
@@ -51,33 +50,12 @@ jobs:
       - name: Ruff format
         run: ruff format --check .
 
-      # NOT BLOCKING, AND NOT AN OVERSIGHT.
-      #
-      # main carries 19 mypy errors across 7 files, 8 of them in core/db.py:
-      # missing parameter annotations, list.append called with a tuple where a
-      # str is declared, and get_settings() returning Any into a Settings
-      # variable. They predate this workflow.
-      #
-      # Blocking on them would make the first run of this gate red for reasons
-      # no pull request had caused, which is how a gate stops being read. So
-      # the step runs and its output is in the log, and it does not fail the
-      # build. Fixing those errors is its own change; when they are gone,
-      # delete this comment and the continue-on-error line below.
-      - name: Mypy (reporting only — see comment)
-        run: |
-          set +e
-          mypy harvester/ | tee mypy.log
-          status=${PIPESTATUS[0]}
-          set -e
-          if [ "$status" -ne 0 ]; then
-            # A warning annotation, not continue-on-error. That flag marks the
-            # step SUCCESS, so anyone reading the check list would see green
-            # and conclude mypy passes — the errors would be visible only to
-            # someone who opened the log. This surfaces the count on the pull
-            # request itself while still letting the build through.
-            echo "::warning title=mypy is not clean::$(tail -n 1 mypy.log) — reported, not blocking; see the comment in .github/workflows/ci.yml"
-          fi
-          exit 0
+      # Blocking, as AGENTS.md always described it. It was not, for one
+      # release: main carried 19 errors that predated the workflow, and a gate
+      # red on arrival is one people learn to scroll past. They are fixed, so
+      # this is a gate again.
+      - name: Mypy
+        run: mypy harvester/
 
       # pytest's addopts already carry --cov, and [tool.coverage.report] sets
       # fail_under = 90, so this step enforces the coverage floor as well as

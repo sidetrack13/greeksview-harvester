@@ -17,7 +17,7 @@ import csv
 import io
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -229,7 +229,11 @@ class AlphaVantageClient:
                     detail=clean_detail,
                 )
 
-            return data
+            # detect_failure above deliberately tolerates a non-dict body,
+            # so this is the one place the dict is asserted. The vendor has
+            # only ever returned an object here; a list would reach callers
+            # that index it by key, which is worth a real guard one day.
+            return cast(dict[str, Any], data)
 
     async def fetch_csv(
         self,
