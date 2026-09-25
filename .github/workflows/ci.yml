@@ -1,0 +1,75 @@
+# The gate this repository has been described as having.
+#
+# AGENTS.md documents `.github/workflows/ci.yml` running "Ruff, Mypy, Pytest"
+# and tells agents to squash-merge once CI passes. There was no workflow and
+# no checks on any pull request, so "once CI passes" had never been a
+# condition anything could meet.
+#
+# Ruff, ruff format and pytest all pass on main today and block here. Mypy
+# does not — see the step below.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A superseded run tells you nothing, so let a new push cancel the old one.
+# Never cancel on main: those runs are the record of what the branch did.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # pyproject declares requires-python >= 3.12. Pinned to the minimum the
+      # project claims to support, because that is the version a claim of
+      # support has to be true for.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Ruff format
+        run: ruff format --check .
+
+      # NOT BLOCKING, AND NOT AN OVERSIGHT.
+      #
+      # main carries 19 mypy errors across 7 files, 8 of them in core/db.py:
+      # missing parameter annotations, list.append called with a tuple where a
+      # str is declared, and get_settings() returning Any into a Settings
+      # variable. They predate this workflow.
+      #
+      # Blocking on them would make the first run of this gate red for reasons
+      # no pull request had caused, which is how a gate stops being read. So
+      # the step runs and its output is in the log, and it does not fail the
+      # build. Fixing those errors is its own change; when they are gone,
+      # delete this comment and the continue-on-error line below.
+      - name: Mypy (reporting only — see comment)
+        continue-on-error: true
+        run: mypy harvester/
+
+      # pytest's addopts already carry --cov, and [tool.coverage.report] sets
+      # fail_under = 90, so this step enforces the coverage floor as well as
+      # the tests. Note that AGENTS.md claims 100%; the repository is
+      # configured for 90 and currently sits at ~91.
+      - name: Pytest
+        run: pytest
