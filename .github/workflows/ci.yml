@@ -64,8 +64,20 @@ jobs:
       # build. Fixing those errors is its own change; when they are gone,
       # delete this comment and the continue-on-error line below.
       - name: Mypy (reporting only — see comment)
-        continue-on-error: true
-        run: mypy harvester/
+        run: |
+          set +e
+          mypy harvester/ | tee mypy.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            # A warning annotation, not continue-on-error. That flag marks the
+            # step SUCCESS, so anyone reading the check list would see green
+            # and conclude mypy passes — the errors would be visible only to
+            # someone who opened the log. This surfaces the count on the pull
+            # request itself while still letting the build through.
+            echo "::warning title=mypy is not clean::$(tail -n 1 mypy.log) — reported, not blocking; see the comment in .github/workflows/ci.yml"
+          fi
+          exit 0
 
       # pytest's addopts already carry --cov, and [tool.coverage.report] sets
       # fail_under = 90, so this step enforces the coverage floor as well as
