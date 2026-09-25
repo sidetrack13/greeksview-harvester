@@ -51,7 +51,7 @@ class SecEdgarWorker(BaseWorker):
         form13f: bool = True,
         tickers: list[str] | None = None,
         limit: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> WorkerResult:
         """Execute SEC EDGAR daily submission sweep."""
         start_time = time.time()
@@ -127,7 +127,7 @@ class SecEdgarWorker(BaseWorker):
             metadata={"form4": form4, "form13f": form13f, "tickers": sample_tickers},
         )
 
-    async def _ensure_schema(self, db: DatabaseManager):
+    async def _ensure_schema(self, db: DatabaseManager) -> None:
         """Ensure tables for insider trades and institutional holdings exist."""
         await db.initialize_tables()
 

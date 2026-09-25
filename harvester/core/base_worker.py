@@ -37,10 +37,15 @@ class BaseWorker(ABC):
     target_views: list[str] = []
 
     def __init__(self, config: Any | None = None):
-        self.config = config
+        # Declared Any, not Any | None: every subclass passes
+        # `settings or config or get_settings()`, which is never None, and
+        # each then narrows it to Settings. Typing the attribute as
+        # optional made those four narrowings errors rather than the
+        # documented contract they are.
+        self.config: Any = config
 
     @abstractmethod
-    async def run_once(self, **kwargs) -> WorkerResult:
+    async def run_once(self, **kwargs: Any) -> WorkerResult:
         """Execute a single harvesting cycle independently.
 
         Args:

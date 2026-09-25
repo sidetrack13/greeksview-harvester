@@ -1077,7 +1077,7 @@ class AlphaVantageWorker(BaseWorker):
         symbols: list[str] | str | None = None,
         limit: int | None = None,
         use_mock: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> WorkerResult:
         """Execute Alpha Vantage harvesting pass."""
         start_time = time.time()

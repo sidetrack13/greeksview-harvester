@@ -41,7 +41,7 @@ class CongressionalWorker(BaseWorker):
         year: int | None = None,
         all_years: bool = True,
         limit: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> WorkerResult:
         """Run single ingestion pass for House and/or Senate disclosures."""
         start_time = time.time()
